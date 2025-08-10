@@ -1,0 +1,118 @@
+/* ===============================
+Doctor Dashboard Styles
+Follows: Professional, Accessible, Dashboard-Friendly
+================================= */
+
+/* ====== Layout ====== */
+.doctor-dashboard {
+  padding: 20px;
+  background-color: #F8FAFB;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  color: #2D3436;
+}
+
+.dashboard-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+/* ====== Table ====== */
+.appointments-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+.appointments-table th,
+.appointments-table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+  font-size: 0.95rem;
+}
+
+.appointments-table th {
+  background-color: #F0F6FF;
+  font-weight: 600;
+}
+
+.appointments-table tr:hover {
+  background-color: #F9FBFD;
+}
+
+/* ====== Buttons ====== */
+.btn-primary {
+  background: #2A8BF2;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+}
+
+.btn-primary:hover {
+  background: #1f6dc0;
+}
+
+.btn-success {
+  background: #27AE60;
+  color: white;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-right: 5px;
+}
+
+.btn-success:hover {
+  background: #1e874b;
+}
+
+.btn-danger {
+  background: #E74C3C;
+  color: white;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-right: 5px;
+}
+
+.btn-danger:hover {
+  background: #c0392b;
+}
+
+/* ====== Profile Button ====== */
+.profile-btn {
+  margin-bottom: 20px;
+}
+
+/* ====== Disabled Buttons ====== */
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ====== Responsive ====== */
+@media (max-width: 768px) {
+  .appointments-table th,
+  .appointments-table td {
+    font-size: 0.85rem;
+    padding: 6px;
+  }
+
+  .btn-primary,
+  .btn-success,
+  .btn-danger {
+    width: 100%;
+    margin-bottom: 5px;
+  }
+}

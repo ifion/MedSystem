@@ -1,0 +1,152 @@
+/* Layout */
+.page-container {
+  min-height: 100vh;
+  background: #F8FAFB;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  background: #fff;
+  padding: 2rem;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  width: 100%;
+  max-width: 420px;
+}
+
+.title {
+  font-family: 'Inter', sans-serif;
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+
+.role-text {
+  margin-bottom: 1rem;
+  color: #636E72;
+}
+
+/* Form Elements */
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.input-group {
+  display: flex;
+  align-items: center;
+}
+
+.input-group input {
+  flex-grow: 1;
+}
+
+.input-group button {
+  margin-left: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.input-group button:hover {
+  background: #e0e0e0;
+}
+
+input, select {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  margin-top: 0.3rem;
+  font-size: 1rem;
+}
+
+input:focus, select:focus {
+  border-color: #2A8BF2;
+  outline: none;
+}
+
+/* Password Strength */
+.password-strength {
+  margin-top: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.password-strength.weak { color: #E74C3C; }
+.password-strength.medium { color: #F39C12; }
+.password-strength.strong { color: #27AE60; }
+
+/* Buttons */
+.custom-action-btn {
+  background: #2A8BF2;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+  width: 100%;
+  margin-top: 1.2rem;
+}
+.custom-action-btn:hover:enabled {
+  background: #1f6dc0;
+}
+.custom-action-btn:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+/* Links & Text */
+.link {
+  color: #2A8BF2;
+  text-decoration: none;
+}
+.link:hover {
+  text-decoration: underline;
+}
+
+.error-text {
+  color: #E74C3C;
+  font-size: 0.9rem;
+  margin-top: 0.3rem;
+}
+
+/* Add to existing CSS */
+
+.phone-input {
+  width: 100%;
+}
+
+.phone-input input {
+  width: 100%;
+  padding: 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.phone-input input:focus {
+  border-color: #2A8BF2;
+  outline: none;
+}
+
+/* Shrink flag size in react-phone-number-input */
+.phone-input .PhoneInputCountryIcon {
+  width: 18px !important;   /* default is around 24px */
+  height: 18px !important;
+}
+
+.phone-input .PhoneInputCountryIcon img,
+.phone-input .PhoneInputCountryIcon--square {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.phone-input .PhoneInputCountry {
+  gap: 4px; /* reduce spacing between flag and code */
+}

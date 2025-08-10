@@ -1,0 +1,126 @@
+:root {
+  --primary: #2A8BF2;
+  --secondary: #1ABC9C;
+  --bg: #F8FAFB;
+  --surface: #FFFFFF;
+  --text: #2D3436;
+  --text-light: #636E72;
+  --error: #E74C3C;
+}
+
+/* === Layout === */
+.login-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 16px;
+}
+
+.login-card {
+  background: var(--surface);
+  padding: 32px;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  text-align: center;
+  color: var(--text);
+}
+
+.error-message {
+  color: var(--error);
+  margin-bottom: 16px;
+  font-size: 0.95rem;
+}
+
+/* === Form === */
+.form-group {
+  margin-bottom: 16px;
+}
+
+label {
+  display: block;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+/* === Password Toggle === */
+.password-wrapper {
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.password-wrapper input {
+  flex: 1;
+}
+
+.toggle-password {
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 8px;
+  position: absolute;
+  right: 8px;
+}
+
+/* === Buttons === */
+.btn-primary1 {
+  background: var(--primary);
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+  width: 100%;
+}
+
+.btn-primary1:hover {
+  background: #1f6dc0;
+}
+
+/* === Footer === */
+.login-footer {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text-light);
+}
+
+.link-primary {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link-primary:hover {
+  text-decoration: underline;
+}
+
+/* === Responsive === */
+@media (max-width: 480px) {
+  .login-card {
+    padding: 24px;
+  }
+}

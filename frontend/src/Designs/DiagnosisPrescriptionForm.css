@@ -1,0 +1,203 @@
+/* --- 1. Root Variables & General Styles --- */
+:root {
+  --dp-bg-color: #f4f7f9;
+  --dp-card-bg: #ffffff;
+  --dp-primary-blue: #007bff;
+  --dp-primary-hover: #0069d9;
+  --dp-text-primary: #212529;
+  --dp-text-secondary: #6c757d;
+  --dp-border-color: #ced4da;
+  --dp-success-bg: #d4edda;
+  --dp-success-text: #155724;
+  --dp-error-bg: #f8d7da;
+  --dp-error-text: #721c24;
+  --dp-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+body {
+  background-color: var(--dp-bg-color);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--dp-text-primary);
+}
+
+
+/* --- 2. Main Container & Header --- */
+.dp-container {
+  max-width: 900px;
+  margin: 2rem auto;
+  padding: 2rem;
+  background: var(--dp-card-bg);
+  border-radius: 12px;
+  box-shadow: var(--dp-shadow);
+}
+
+.dp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #e9ecef;
+  padding-bottom: 1rem;
+  margin-bottom: 1rem;
+}
+
+.dp-title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.dp-patient-id {
+  color: var(--dp-text-secondary);
+  margin-bottom: 1.5rem;
+}
+
+
+/* --- 3. Form Layout & Sections --- */
+.dp-form-wrapper {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2.5rem;
+}
+
+.dp-section {
+  padding: 1.5rem;
+  border: 1px solid var(--dp-border-color);
+  border-radius: 8px;
+  background-color: #fdfdfd;
+}
+
+.dp-section-title {
+  font-size: 1.25rem;
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  color: var(--dp-primary-blue);
+}
+
+
+/* --- 4. Form Elements --- */
+.dp-form-group {
+  margin-bottom: 1.25rem;
+}
+
+.dp-label {
+  display: block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  color: var(--dp-text-secondary);
+}
+
+.dp-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--dp-border-color);
+  background-color: var(--dp-card-bg);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box; /* Important for consistent sizing */
+}
+
+.dp-input:focus {
+  outline: none;
+  border-color: var(--dp-primary-blue);
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.2);
+}
+
+textarea.dp-input {
+  resize: vertical;
+  min-height: 100px;
+}
+
+/* Grid for side-by-side inputs */
+.dp-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+}
+
+
+/* --- 5. Buttons & Alerts --- */
+.dp-submit-button,
+.dp-back-button {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.1s;
+}
+
+.dp-submit-button {
+  background-color: var(--dp-primary-blue);
+  color: white;
+  display: block;
+  width: 100%;
+}
+
+.dp-submit-button:hover {
+  background-color: var(--dp-primary-hover);
+}
+
+.dp-submit-button:active {
+  transform: scale(0.98);
+}
+
+.dp-back-button {
+  background-color: transparent;
+  color: var(--dp-text-secondary);
+  border: 1px solid var(--dp-border-color);
+}
+
+.dp-back-button:hover {
+  background-color: #f8f9fa;
+  color: var(--dp-text-primary);
+}
+
+.dp-alert {
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.dp-alert-success {
+  background-color: var(--dp-success-bg);
+  color: var(--dp-success-text);
+  border: 1px solid var(--dp-success-text);
+}
+
+.dp-alert-error {
+  background-color: var(--dp-error-bg);
+  color: var(--dp-error-text);
+  border: 1px solid var(--dp-error-text);
+}
+
+
+/* --- 6. Responsiveness --- */
+@media (min-width: 768px) {
+  .dp-form-wrapper {
+    /* Two columns for the two sections on larger screens */
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 767px) {
+  .dp-container {
+    margin: 1rem;
+    padding: 1.5rem;
+  }
+
+  .dp-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  /* Make grid single column on mobile */
+  .dp-grid {
+    grid-template-columns: 1fr;
+    gap: 0; /* No vertical gap needed, form-group has margin */
+  }
+}

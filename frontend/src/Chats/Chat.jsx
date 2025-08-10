@@ -1,0 +1,881 @@
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import axios from 'axios';
+import io from 'socket.io-client';
+import { v4 as uuidv4 } from 'uuid';
+import AutoResizeTextarea from './AutoResizeTextArea';
+import ImageEditor from './ImageEditor';
+import '../Designs/Chat.css';
+
+const OptimizedMessage = memo(({
+  message,
+  userId,
+  onEdit,
+  onDelete,
+  onUndoDelete,
+  onCopy,
+  onReply,
+  isEditing,
+  editValue,
+  onEditChange,
+  onImageClick,
+  onLongPress,
+  onReplyPreviewClick
+}) => {
+  const messageRef = useRef(null);
+  const pressTimer = useRef(null);
+  const touchStartX = useRef(null);
+  const swipeThreshold = 100;
+
+  const handlePressStart = useCallback((e) => {
+    if (e.touches && e.touches.length > 0) {
+      touchStartX.current = e.touches[0].clientX;
+    }
+    pressTimer.current = setTimeout(() => {
+      if (!message.isDeleted) {
+        onLongPress(message);
+      }
+    }, 1000);
+  }, [message, onLongPress]);
+
+  const handleTouchMove = useCallback((e) => {
+    if (e.touches && e.touches.length > 0 && touchStartX.current != null) {
+      const currentX = e.touches[0].clientX;
+      const diffX = touchStartX.current - currentX;
+      if (Math.abs(diffX) > swipeThreshold) {
+        clearTimeout(pressTimer.current);
+        onReply(message);
+        const direction = diffX > 0 ? 'left' : 'right';
+        if (messageRef.current) {
+          messageRef.current.classList.add(`swiped-${direction}`);
+          setTimeout(() => {
+            if (messageRef.current) {
+              messageRef.current.classList.remove(`swiped-${direction}`);
+            }
+          }, 200);
+        }
+        touchStartX.current = null;
+      }
+    }
+  }, [message, onReply, swipeThreshold]);
+
+  const handlePressEnd = useCallback(() => {
+    clearTimeout(pressTimer.current);
+    touchStartX.current = null;
+  }, []);
+
+  // Debug log for alignment (remove after testing)
+  console.log('Message alignment check: sender ID', message.sender?._id?.toString(), 'user ID', userId);
+
+  return (
+    <div 
+      ref={messageRef}
+      className={`message-wrapper ${message.sender?._id?.toString() === userId ? 'sent' : 'received'}`}
+      onTouchStart={handlePressStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handlePressEnd}
+      data-message-id={message._id}
+    >
+      <div className="message">
+        {message.isDeleted ? (
+          <div className="deleted-message">
+            This message was deleted
+            {message.sender._id === userId && (
+              <button onClick={() => onUndoDelete(message._id)} className="undo-delete">
+                Undo
+              </button>
+            )}
+          </div>
+        ) : isEditing ? (
+          <div className="edit-container">
+            <input
+              value={editValue}
+              onChange={onEditChange}
+              className="edit-input"
+              autoFocus
+            />
+            <button 
+              className="icon-button"
+              onClick={() => onEdit(message._id)}
+              aria-label="Save edit"
+            >
+              ✔️
+            </button>
+          </div>
+        ) : (
+          <>
+            {message.replyTo && (
+              <div 
+                className="reply-preview"
+                onClick={() => {
+                  const replyId = typeof message.replyTo === 'object' ? message.replyTo._id : message.replyTo;
+                  onReplyPreviewClick(replyId);
+                }}
+                style={{ cursor: 'pointer' }}
+              >
+                <span className="reply-label">Replying to:</span>
+                <div className="reply-content">
+                  {message.replyTo?.content || message.replyContent || 'Original message'}
+                </div>
+              </div>
+            )}
+            <div className="message-content">
+              {message.content}
+              {message.mediaUrl && (
+                <div className="media-container" onClick={() => onImageClick(message.mediaUrl)}>
+                  {message.mediaType === 'image' ? (
+                    <img
+                      src={message.mediaUrl}
+                      alt="Content"
+                      loading="lazy"
+                      className="optimized-image"
+                      style={{ cursor: 'pointer' }}
+                    />
+                  ) : message.mediaType === 'audio' ? (
+                    <audio controls src={message.mediaUrl} className="voice-note" />
+                  ) : (
+                    <a href={message.mediaUrl} download className="file-download">
+                      📎 {message.fileName || 'File'}
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="message-meta">
+              <span className="timestamp">
+                {new Date(message.createdAt).toLocaleTimeString('en-US', {
+                  hour: 'numeric',
+                  minute: '2-digit'
+                })}
+              </span>
+              {message.disappearAfter > 0 && (
+                <span className="disappear-timer">Disappears in {message.disappearAfter / 3600} hr</span>
+              )}
+              {message.sender._id === userId && (
+                <span className={`status ${message.status}`}>
+                  {message.status === 'sent' && '✓'}
+                  {message.status === 'delivered' && '✓✓'}
+                  {message.status === 'read' && '✓✓'}
+                </span>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+
+const Chat = () => {
+  const apiUrl = import.meta.env.VITE_API_URL;
+  const { userId } = useParams();
+  const [messages, setMessages] = useState([]);
+  const [inputText, setInputText] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [file, setFile] = useState(null);
+  const [recipient, setRecipient] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [replyTo, setReplyTo] = useState(null);
+  const [error, setError] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [selectedMessageForActions, setSelectedMessageForActions] = useState(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showImageEditor, setShowImageEditor] = useState(false);
+  const [showImageOptions, setShowImageOptions] = useState(false);
+  const [disappearTime, setDisappearTime] = useState(0);
+  const [showDisappearModal, setShowDisappearModal] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [canChat, setCanChat] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const socket = useRef(null);
+  const typingTimeout = useRef(null);
+  const fileInputRef = useRef(null);
+  const mediaRecorder = useRef(null);
+  const timerRef = useRef(null);
+
+  const groupMessagesByDate = (msgs) => {
+    const grouped = [];
+    let lastDate = null;
+    msgs.forEach((msg) => {
+      const msgDate = new Date(msg.createdAt).toLocaleDateString();
+      if (msgDate !== lastDate) {
+        grouped.push({ type: 'separator', date: msgDate, id: `sep-${msgDate}` });
+        lastDate = msgDate;
+      }
+      grouped.push({ ...msg, type: 'message' });
+    });
+    return grouped;
+  };
+
+  const preloadMedia = (url, type) => {
+    if (type === 'image') {
+      const img = new Image();
+      img.src = url;
+    } else if (type === 'audio') {
+      const audio = new Audio();
+      audio.src = url;
+      audio.preload = 'auto';
+    }
+  };
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const fetchData = async () => {
+      try {
+        const [messagesRes, canChatRes, recipientRes] = await Promise.all([
+          axios.get(`${apiUrl}/messages/${userId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          axios.get(`${apiUrl}/appointments/check-chat/${userId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+          axios.get(`${apiUrl}/auth/user/${userId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }),
+        ]);
+
+        const messagesWithMedia = messagesRes.data.map((msg) => {
+          if (msg.mediaUrl) {
+            const mediaType = msg.mediaUrl.match(/\.(jpe?g|png|gif)$/i) ? 'image' :
+                             msg.mediaUrl.match(/\.(mp3|webm)$/i) ? 'audio' : 'file';
+            if (mediaType === 'image' || mediaType === 'audio') {
+              preloadMedia(msg.mediaUrl, mediaType);
+            }
+            return { ...msg, mediaType };
+          }
+          return msg;
+        });
+
+        setMessages(messagesWithMedia);
+        setCanChat(canChatRes.data.canChat);
+        setRecipient(recipientRes.data);
+        setLoading(false);
+        if (canChatRes.data.canChat) {
+          scrollToBottom();
+        }
+      } catch (err) {
+        console.error('Initialization error:', err);
+        setError('Failed to load chat data. Please refresh the page.');
+        setLoading(false);
+      }
+    };
+
+    // Use apiUrl for socket
+    socket.current = io(apiUrl, {
+      query: { userId: localStorage.getItem('userId'), recipientId: userId },
+      auth: { token },
+      transports: ['websocket'] // Force WebSocket for real-time
+    });
+
+    // Add connection debug
+    socket.current.on('connect', () => console.log('Socket connected'));
+    socket.current.on('connect_error', (err) => console.error('Socket connection error:', err));
+
+    socket.current.emit('login', localStorage.getItem('userId'));
+
+    socket.current.on('newMessage', (msg) => {
+      console.log('Received newMessage:', msg);
+      setMessages((prev) => {
+        if (prev.some(m => m._id === msg._id || m.clientId === msg.clientId)) return prev;
+        return [...prev, msg];
+      });
+      scrollToBottom();
+      if (msg.recipient._id === localStorage.getItem('userId')) {
+        socket.current.emit('messageDelivered', { messageId: msg._id });
+        if (document.hasFocus()) {
+          socket.current.emit('messageRead', { messageId: msg._id, readerId: localStorage.getItem('userId') });
+        }
+      }
+    });
+
+    socket.current.on('messageSent', (msg) => {
+      setMessages((prev) => prev.map((m) => (m.clientId === msg.clientId ? msg : m)));
+    });
+
+    socket.current.on('messageStatusUpdate', ({ messageId, status }) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg._id === messageId ? { ...msg, status } : msg))
+      );
+    });
+
+    socket.current.on('userTyping', () => setIsTyping(true));
+    socket.current.on('userStoppedTyping', () => setIsTyping(false));
+
+    fetchData();
+
+    return () => {
+      socket.current.off('newMessage');
+      socket.current.off('messageSent');
+      socket.current.off('messageStatusUpdate');
+      socket.current.off('userTyping');
+      socket.current.off('userStoppedTyping');
+      socket.current.disconnect();
+      clearInterval(timerRef.current);
+    };
+  }, [userId, apiUrl]);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && document.hasFocus()) {
+            const messageId = entry.target.dataset.messageId;
+            const message = messages.find((msg) => msg._id === messageId);
+            if (message && message.recipient._id === localStorage.getItem('userId')) {
+              socket.current.emit('messageRead', { messageId, readerId: localStorage.getItem('userId') });
+            }
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+    if (messagesContainerRef.current) {
+      const messageElements = messagesContainerRef.current.querySelectorAll('.message-wrapper');
+      messageElements.forEach((el) => observer.observe(el));
+    }
+    return () => observer.disconnect();
+  }, [messages]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (messagesContainerRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+        setIsAtBottom(scrollHeight - scrollTop - clientHeight < 1);
+      }
+    };
+
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      handleScroll();
+    }
+
+    return () => {
+      if (container) {
+        container.removeEventListener('scroll', handleScroll);
+      }
+    };
+  }, []);
+
+  const handleFileSelect = (event) => {
+    const selected = event.target.files[0];
+    if (selected) {
+      if (selected.type.startsWith('image/')) {
+        setSelectedImage(URL.createObjectURL(selected));
+        setShowImageOptions(true);
+      } else {
+        setFile(selected);
+      }
+    }
+  };
+
+  const handleSendImageDirectly = () => {
+    const selectedFile = fileInputRef.current.files[0];
+    setFile(selectedFile);
+    setShowImageOptions(false);
+    setSelectedImage(null);
+  };
+
+  const handleEditImage = () => {
+    setShowImageEditor(true);
+    setShowImageOptions(false);
+  };
+
+  const handleImageSave = (editedFile) => {
+    setFile(editedFile);
+    setShowImageEditor(false);
+    setSelectedImage(null);
+  };
+
+  const handleImageCancel = () => {
+    setShowImageOptions(false);
+    setShowImageEditor(false);
+    setSelectedImage(null);
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder.current = new MediaRecorder(stream);
+      mediaRecorder.current.start();
+      setIsRecording(true);
+      const audioChunks = [];
+      mediaRecorder.current.ondataavailable = (e) => audioChunks.push(e.data);
+      mediaRecorder.current.onstop = () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        const audioFile = new File([audioBlob], 'voice-note.webm', { type: 'audio/webm' });
+        setFile(audioFile);
+        stream.getTracks().forEach(track => track.stop());
+        clearInterval(timerRef.current);
+        setRecordingTime(0);
+        setIsRecording(false);
+      };
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error('Error starting recording:', err);
+      setError('Failed to start recording. Please check microphone permissions.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder.current && mediaRecorder.current.state !== 'inactive') {
+      mediaRecorder.current.stop();
+    }
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 0);
+  }, []);
+
+  const scrollToMessage = useCallback((messageId) => {
+    const messageElement = messagesContainerRef.current.querySelector(`[data-message-id="${messageId}"]`);
+    if (messageElement) {
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, []);
+
+  const sendMessage = useCallback(async () => {
+    if (!inputText && !file) return;
+
+    const token = localStorage.getItem('token');
+    const tempId = `temp-${uuidv4()}`;
+    const clientId = uuidv4();
+    const newMsg = {
+      _id: tempId,
+      clientId,
+      content: inputText,
+      sender: { _id: localStorage.getItem('userId'), name: 'You' },
+      recipient: { _id: userId, name: recipient?.name },
+      status: 'sent',
+      createdAt: new Date().toISOString(),
+      replyTo: replyTo ? replyTo._id : undefined,
+      replyContent: replyTo ? (replyTo.content ? replyTo.content : 'Image') : undefined,
+      disappearAfter: disappearTime,
+    };
+
+    setMessages((prev) => [...prev, newMsg]);
+    setInputText('');
+    setFile(null);
+    setReplyTo(null);
+    setDisappearTime(0);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
+    try {
+      const formData = new FormData();
+      formData.append('recipientId', userId);
+      if (inputText) formData.append('content', inputText);
+      if (file) formData.append('media', file);
+      if (replyTo) formData.append('replyTo', replyTo._id);
+      if (disappearTime > 0) formData.append('disappearAfter', disappearTime);
+      formData.append('clientId', clientId);
+
+      const res = await axios.post(`${apiUrl}/messages`, formData, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      socket.current.emit('sendMessage', { ...res.data, recipientId: userId });
+    } catch (err) {
+      console.error('Error sending message:', err);
+      setMessages((prev) =>
+        prev.map((msg) => (msg._id === tempId ? { ...msg, status: 'failed' } : msg))
+      );
+      setError('Failed to send message. Please try again.');
+    }
+    scrollToBottom();
+  }, [inputText, file, recipient, replyTo, disappearTime, userId, apiUrl]);
+
+  const handleTyping = useCallback(() => {
+    socket.current.emit('typing', {
+      senderId: localStorage.getItem('userId'),
+      recipientId: userId,
+    });
+    clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => {
+      socket.current.emit('stopTyping', {
+        senderId: localStorage.getItem('userId'),
+        recipientId: userId,
+      });
+    }, 1000);
+  }, [userId]);
+
+  const deleteMessage = useCallback(async (id) => {
+    const token = localStorage.getItem('token');
+    try {
+      await axios.delete(`${apiUrl}/messages/${id}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      setMessages((prev) => 
+        prev.map((msg) => 
+          msg._id === id ? { ...msg, isDeleted: true } : msg
+        )
+      );
+    } catch (err) {
+      console.error('Delete failed:', err);
+      setError('Failed to delete message.');
+    }
+  }, [apiUrl]);
+
+  const undoDeleteMessage = useCallback(async (id) => {
+    const token = localStorage.getItem('token');
+    try {
+      const { data: restoredMsg } = await axios.put(`${apiUrl}/messages/restore/${id}`, null, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      setMessages((prev) => 
+        prev.map((msg) => 
+          msg._id === id ? { ...msg, isDeleted: false, content: restoredMsg.content } : msg
+        )
+      );
+    } catch (err) {
+      console.error('Undo delete failed:', err);
+      setError('Failed to undo delete message.');
+    }
+  }, [apiUrl]);
+
+  const editMessage = useCallback(async (id) => {
+    if (!editText.trim()) return;
+    const token = localStorage.getItem('token');
+    try {
+      const { data: updatedMsg } = await axios.put(
+        `${apiUrl}/messages/${id}`,
+        { content: editText },
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      setMessages(prev =>
+        prev.map(msg =>
+          msg._id === id ? { ...msg, content: updatedMsg.content, isEdited: updatedMsg.isEdited } : msg
+        )
+      );
+      setEditingId(null);
+      setEditText('');
+    } catch (err) {
+      console.error('Edit failed:', err);
+      setError('Failed to edit message.');
+    }
+  }, [editText, apiUrl]);
+
+  const handleCopyMessage = (content) => {
+    navigator.clipboard.writeText(content);
+  };
+
+  const handleImageClick = (imageUrl) => {
+    setSelectedImage(imageUrl);
+  };
+
+  const closeImageModal = () => {
+    setSelectedImage(null);
+  };
+
+  const openDisappearModal = () => {
+    setShowDisappearModal(true);
+  };
+
+  const closeDisappearModal = () => {
+    setShowDisappearModal(false);
+  };
+
+  const timerOptions = [
+    { label: '1 Hour', seconds: 3600 },
+    { label: '6 Hours', seconds: 21600 },
+    { label: '12 Hours', seconds: 43200 },
+    { label: '24 Hours', seconds: 86400 }
+  ];
+
+  const groupedMessages = groupMessagesByDate(messages);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  if (!canChat) {
+    return <div>Chat is only available on appointment days.</div>;
+  }
+
+  const userRole = localStorage.getItem('role');
+
+  return (
+    <div className="chat-container">
+      <header className="chat-header">
+        {recipient && (
+          <div className="header-content">
+            <Link to={`/user/${recipient._id}`} style={{ textDecoration: "none", color: "black" }} className="recipient-name">{recipient.name}</Link>
+            <div className="status-indicator">
+              <div className={`status-dot ${recipient.isOnline ? 'online' : 'offline'}`} />
+              <span>{recipient.isOnline ? 'Online' : 'Offline'}</span>
+            </div>
+            {userRole === 'doctor' && (
+              <Link to={`/diagnosis-prescription/${userId}`} className="diagnosis-button" aria-label="Diagnosis & Prescription">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm4.59-12.42L10 14.17l-2.59-2.58L6 13l4 4 8-8z" /> {/* Stethoscope or medical icon */}
+                </svg>
+              </Link>
+            )}
+          </div>
+        )}
+      </header>
+
+      <main className="messages-container" ref={messagesContainerRef} role="log">
+        {error && <div className="error-message">{error}</div>}
+        {groupedMessages.map((item) => {
+          if (item.type === 'separator') {
+            return (
+              <div key={item.id} className="date-separator">
+                {item.date}
+              </div>
+            );
+          } else {
+            return (
+              <OptimizedMessage
+                key={item._id}
+                message={item}
+                userId={localStorage.getItem('userId')}
+                isEditing={editingId === item._id}
+                editValue={editText}
+                onEditChange={(e) => setEditText(e.target.value)}
+                onEdit={editMessage}
+                onDelete={deleteMessage}
+                onUndoDelete={undoDeleteMessage}
+                onCopy={handleCopyMessage}
+                onReply={setReplyTo}
+                onImageClick={handleImageClick}
+                onLongPress={() => setSelectedMessageForActions(item)}
+                onReplyPreviewClick={scrollToMessage}
+              />
+            );
+          }
+        })}
+        {isTyping && (
+          <div className="typing-indicator">
+            <div className="typing-animation">
+              <div className="dot" />
+              <div className="dot" />
+              <div className="dot" />
+            </div>
+          </div>
+        )}
+        {!isAtBottom && (
+          <button
+            className="scroll-to-bottom-button"
+            onClick={scrollToBottom}
+            aria-label="Scroll to bottom"
+          >
+            ▽
+          </button>
+        )}
+        <div ref={messagesEndRef} />
+      </main>
+
+      <footer className="input-container">
+        {replyTo && (
+          <div className="reply-preview-bar">
+            <span>Replying to: {replyTo.content ? replyTo.content.slice(0, 30) : 'Image'}</span>
+            <button className="close-reply" onClick={() => setReplyTo(null)} aria-label="Cancel reply">
+              ×
+            </button>
+          </div>
+        )}
+
+        <div className="input-group">
+          <button className="icon-button attach-button" onClick={() => fileInputRef.current.click()} aria-label="Attach file">
+            <svg className="attachment-icon" viewBox="0 0 24 24">
+              <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1H10v9.5a2.5 2.5 0 005 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" />
+            </svg>
+          </button>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            className="hidden-file-input"
+            accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
+          />
+
+          <AutoResizeTextarea
+            value={inputText}
+            onChange={(e) => {
+              setInputText(e.target.value);
+              handleTyping();
+            }}
+            placeholder={replyTo ? "Type your reply..." : "Type a message..."}
+            className="message-input"
+            aria-label={replyTo ? "Type your reply" : "Type a message"}
+          />
+
+          <button
+            className="send-button"
+            onClick={sendMessage}
+            disabled={!inputText && !file}
+            aria-label="Send message"
+          >
+            <svg className="send-icon" viewBox="0 0 24 24">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
+          </button>
+
+          <button
+            onClick={isRecording ? stopRecording : startRecording}
+            className={`record-button ${isRecording ? 'recording' : ''}`}
+            aria-label={isRecording ? "Stop recording" : "Record voice note"}
+          >
+            {isRecording ? '⏹' : '🎙'}
+            {isRecording && (
+              <span className="recording-indicator">
+                Recording... {formatTime(recordingTime)}
+              </span>
+            )}
+          </button>
+
+          <button 
+            className="disappear-button"
+            onClick={openDisappearModal}
+            aria-label="Set disappear timer"
+          >
+            {disappearTime > 0 ? `Timer: ${disappearTime / 3600} hr` : '⌚'}
+          </button>
+        </div>
+
+        {file && (
+          <div className="selected-file">
+            <span className="file-name">{file.name}</span>
+            <button
+              onClick={() => {
+                setFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+              className="remove-file"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+      </footer>
+
+      {selectedImage && !showImageOptions && !showImageEditor && (
+        <div className="image-modal" onClick={closeImageModal}>
+          <div className="image-modal-content">
+            <img src={selectedImage} alt="Expanded view" />
+          </div>
+          <button className="modal-close" onClick={closeImageModal}>×</button>
+        </div>
+      )}
+
+      {selectedMessageForActions && !selectedMessageForActions.isDeleted && (
+        <div className="popup-backdrop" onClick={() => setSelectedMessageForActions(null)}>
+          <div className="message-actions-popup" onClick={(e) => e.stopPropagation()}>
+            <button 
+              className="action-button" 
+              onClick={() => {
+                setReplyTo(selectedMessageForActions);
+                setSelectedMessageForActions(null);
+              }} 
+              aria-label="Reply"
+            >
+              ↩ Reply
+            </button>
+            {selectedMessageForActions.sender._id === localStorage.getItem('userId') && (
+              <>
+                <button 
+                  className="action-button" 
+                  onClick={() => {
+                    setEditingId(selectedMessageForActions._id);
+                    setEditText(selectedMessageForActions.content);
+                    setSelectedMessageForActions(null);
+                  }} 
+                  aria-label="Edit"
+                >
+                  ✎ Edit
+                </button>
+                <button 
+                  className="action-button" 
+                  onClick={() => {
+                    deleteMessage(selectedMessageForActions._id);
+                    setSelectedMessageForActions(null);
+                  }} 
+                  aria-label="Delete"
+                >
+                  🗑 Delete
+                </button>
+              </>
+            )}
+            <button 
+              className="action-button" 
+              onClick={() => {
+                handleCopyMessage(selectedMessageForActions.content);
+                setSelectedMessageForActions(null);
+              }} 
+              aria-label="Copy"
+            >
+              ⎘ Copy
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showImageOptions && (
+        <div className="popup-backdrop" onClick={handleImageCancel}>
+          <div className="message-actions-popup" onClick={(e) => e.stopPropagation()}>
+            <p>Would you like to:</p>
+            <button className="action-button" onClick={handleSendImageDirectly}>
+              Send Image Directly
+            </button>
+            <button className="action-button" onClick={handleEditImage}>
+              Edit Image First
+            </button>
+            <button className="action-button" onClick={handleImageCancel}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showImageEditor && (
+        <ImageEditor imageSrc={selectedImage} onSave={handleImageSave} onCancel={handleImageCancel} />
+      )}
+
+      {showDisappearModal && (
+        <div className="popup-backdrop" onClick={closeDisappearModal}>
+          <div className="timer-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Select Disappear Timer</h3>
+            <ul className="timer-options">
+              {timerOptions.map(option => (
+                <li key={option.seconds}>
+                  <button 
+                    className="timer-option-button" 
+                    onClick={() => {
+                      setDisappearTime(option.seconds);
+                      closeDisappearModal();
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button className="cancel-button" onClick={closeDisappearModal}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Chat;

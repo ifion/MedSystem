@@ -1,0 +1,226 @@
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #F8FAFB;
+  font-family: 'Inter', 'Segoe UI', sans-serif;
+}
+
+.dashboard-title {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #2D3436;
+  padding: 16px;
+  text-align: center;
+}
+
+.dashboard-container {
+  display: flex;
+  flex: 1;
+}
+
+.dashboard-sidebar {
+  width: 200px;
+  background-color: #FFFFFF;
+  padding: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.section-button {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 8px;
+  background-color: #FFFFFF;
+  border: none;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 1rem;
+  font-weight: 500;
+  color: #2D3436;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.section-button:hover {
+  background-color: #EAF3FF;
+}
+
+.section-button.active {
+  background-color: #2A8BF2;
+  color: white;
+}
+
+.dashboard-content {
+  flex: 1;
+  padding: 16px;
+}
+
+.section-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #2D3436;
+  margin-bottom: 16px;
+}
+
+.dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  background-color: #FFFFFF;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.dashboard-table th,
+.dashboard-table td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid #E0E0E0;
+}
+
+.dashboard-table th {
+  background-color: #F8FAFB;
+  font-weight: 600;
+  color: #2D3436;
+}
+
+.dashboard-table td {
+  color: #636E72;
+}
+
+.approve-button {
+  background: #2A8BF2;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+  margin-right: 8px;
+}
+
+.approve-button:hover {
+  background: #1f6dc0;
+}
+
+.reject-button {
+  background: #E74C3C;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+}
+
+.reject-button:hover {
+  background: #c0392b;
+}
+
+.modal {
+  position: fixed;
+  top: 20%;
+  left: 30%;
+  background: #FFFFFF;
+  padding: 20px;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1000;
+}
+
+.modal h3 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #2D3436;
+  margin-bottom: 16px;
+}
+
+.modal label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #2D3436;
+}
+
+.modal select,
+.modal input {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 16px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+.modal button {
+  margin-right: 8px;
+}
+
+.react-datepicker-wrapper {
+  width: 100%;
+}
+
+.react-datepicker__input-container input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+
+.loading {
+  text-align: center;
+  font-size: 1.2rem;
+  color: #636E72;
+  padding: 20px;
+}
+
+button {
+  min-width: 100px;
+  min-height: 40px;
+}
+
+/* Responsive Styles */
+
+@media (max-width: 768px) {
+  .dashboard-container {
+    flex-direction: column;
+  }
+
+  .dashboard-sidebar {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .section-button {
+    width: auto;
+    margin: 4px;
+  }
+
+  .dashboard-content {
+    padding: 8px;
+  }
+
+  .dashboard-table {
+    font-size: 0.9rem;
+  }
+
+  .modal {
+    left: 10%;
+    width: 80%;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+  .dashboard-sidebar {
+    width: 150px;
+  }
+
+  .section-button {
+    font-size: 0.9rem;
+  }
+}

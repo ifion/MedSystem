@@ -1,0 +1,88 @@
+/* === Theme Variables === */
+:root {
+  --primary: #2A8BF2;
+  --secondary: #1ABC9C;
+  --bg: #F8FAFB;
+  --surface: #FFFFFF;
+  --text: #2D3436;
+  --text-light: #636E72;
+}
+
+/* === Page Container === */
+.role-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 16px;
+}
+
+/* === Card === */
+.role-card {
+  background: var(--surface);
+  padding: 32px;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+
+/* === Title === */
+.role-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 24px;
+  color: var(--text);
+}
+
+/* === Button Group === */
+.role-buttons {
+  display: flex;
+  justify-content: space-around;
+  margin-bottom: 16px;
+}
+
+/* === Buttons === */
+.btn-primary {
+  background: var(--primary);
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+}
+.btn-primary:hover {
+  background: #1f6dc0;
+}
+
+/* === Footer Text === */
+.role-footer {
+  margin-top: 16px;
+  color: var(--text-light);
+  font-size: 0.95rem;
+}
+
+/* === Links === */
+.link-primary {
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+.link-primary:hover {
+  text-decoration: underline;
+}
+
+/* === Responsive === */
+@media (max-width: 480px) {
+  .role-buttons {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .btn-primary {
+    width: 100%;
+  }
+}
