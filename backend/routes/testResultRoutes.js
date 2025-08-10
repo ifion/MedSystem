@@ -47,9 +47,7 @@ const uploadResult = async (req, res) => {
       return res.status(403).json({ message: 'Not your test' });
     }
     if (req.file) {
-      const uploadResult = await cloudinary.uploader.upload(req.file.path);
-      test.results = uploadResult.secure_url;
-      fs.unlinkSync(req.file.path); // Delete local file after upload
+      test.results = req.file.path; // req.file.path is the Cloudinary secure_url
       await test.save();
       res.json(test);
     } else {
