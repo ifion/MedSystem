@@ -1,3 +1,4 @@
+// Modified Chat.jsx
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -5,6 +6,8 @@ import io from 'socket.io-client';
 import { v4 as uuidv4 } from 'uuid';
 import AutoResizeTextarea from './AutoResizeTextArea';
 import ImageEditor from './ImageEditor';
+import Peer from 'simple-peer';
+import VideoCall from './VideoCall';
 import '../Designs/Chat.css';
 
 const OptimizedMessage = memo(({
@@ -63,9 +66,6 @@ const OptimizedMessage = memo(({
     clearTimeout(pressTimer.current);
     touchStartX.current = null;
   }, []);
-
-  // Debug log for alignment (remove after testing)
-  console.log('Message alignment check: sender ID', message.sender?._id?.toString(), 'user ID', userId);
 
   return (
     <div 
@@ -189,6 +189,17 @@ const Chat = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [canChat, setCanChat] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [incomingCall, setIncomingCall] = useState(false);
+  const [caller, setCaller] = useState(null);
+  const [isCalling, setIsCalling] = useState(false);
+  const [inCall, setInCall] = useState(false);
+  const [callRoomId, setCallRoomId] = useState(null);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [isAudioMuted, setIsAudioMuted] = useState(false);
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+  const [activeVideo, setActiveVideo] = useState('remote');
+  const [peers, setPeers] = useState([]);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -197,6 +208,14 @@ const Chat = () => {
   const fileInputRef = useRef(null);
   const mediaRecorder = useRef(null);
   const timerRef = useRef(null);
+  const callTimeoutRef = useRef(null);
+
+  const configuration = {
+    iceServers: [
+      { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+    ],
+    iceCandidatePoolSize: 10,
+  };
 
   const groupMessagesByDate = (msgs) => {
     const grouped = [];
@@ -265,13 +284,10 @@ const Chat = () => {
       }
     };
 
-    // Use apiUrl for socket
-    socket.current = io(apiUrl, {
+    socket.current = io('http://localhost:5000', {
       query: { userId: localStorage.getItem('userId'), recipientId: userId },
-      auth: { token },
       transports: ['websocket'] // Force WebSocket for real-time
     });
-
     // Add connection debug
     socket.current.on('connect', () => console.log('Socket connected'));
     socket.current.on('connect_error', (err) => console.error('Socket connection error:', err));
@@ -279,7 +295,6 @@ const Chat = () => {
     socket.current.emit('login', localStorage.getItem('userId'));
 
     socket.current.on('newMessage', (msg) => {
-      console.log('Received newMessage:', msg);
       setMessages((prev) => {
         if (prev.some(m => m._id === msg._id || m.clientId === msg.clientId)) return prev;
         return [...prev, msg];
@@ -306,6 +321,69 @@ const Chat = () => {
     socket.current.on('userTyping', () => setIsTyping(true));
     socket.current.on('userStoppedTyping', () => setIsTyping(false));
 
+    // Video call events
+    socket.current.on('incoming_video_call', ({ callerId, roomId }) => {
+      setIncomingCall(true);
+      setCaller(callerId);
+      setCallRoomId(roomId);
+    });
+
+    socket.current.on('video_call_accepted', ({ roomId }) => {
+      clearTimeout(callTimeoutRef.current);
+      setIsCalling(false);
+      setInCall(true);
+      joinVideoRoom(roomId);
+    });
+
+    socket.current.on('video_call_rejected', () => {
+      clearTimeout(callTimeoutRef.current);
+      alert('Call rejected by the other user.');
+      endCall();
+    });
+
+    socket.current.on('video_call_canceled', () => {
+      setIncomingCall(false);
+      alert('Call was canceled by the caller.');
+    });
+
+    socket.current.on('all_users', (users) => {
+      const newPeers = [];
+      users.forEach((userId) => {
+        const peer = createPeer(userId, socket.current.id, localStream);
+        peersRef.current.push({ peerId: userId, peer });
+        newPeers.push(peer);
+      });
+      setPeers(newPeers);
+    });
+
+    socket.current.on('user_joined', (payload) => {
+      const peer = addPeer(payload.signal, payload.callerId, localStream);
+      peersRef.current.push({ peerId: payload.callerId, peer });
+      setPeers((prevPeers) => [...prevPeers, peer]);
+    });
+
+    socket.current.on('receiving_returned_signal', (payload) => {
+      const item = peersRef.current.find((p) => p.peerId === payload.id);
+      if (item) {
+        item.peer.signal(payload.signal);
+      }
+    });
+
+    socket.current.on('call_ended', () => {
+      endCall();
+    });
+
+    socket.current.on('user_left', (id) => {
+      const peerObj = peersRef.current.find((p) => p.peerId === id);
+      if (peerObj) {
+        peerObj.peer.destroy();
+      }
+      setPeers((prevPeers) => prevPeers.filter((p) => p.peerId !== id));
+      if (peersRef.current.length === 0) {
+        endCall();
+      }
+    });
+
     fetchData();
 
     return () => {
@@ -314,53 +392,149 @@ const Chat = () => {
       socket.current.off('messageStatusUpdate');
       socket.current.off('userTyping');
       socket.current.off('userStoppedTyping');
+      socket.current.off('incoming_video_call');
+      socket.current.off('video_call_accepted');
+      socket.current.off('video_call_rejected');
+      socket.current.off('video_call_canceled');
+      socket.current.off('all_users');
+      socket.current.off('user_joined');
+      socket.current.off('receiving_returned_signal');
+      socket.current.off('call_ended');
+      socket.current.off('user_left');
       socket.current.disconnect();
       clearInterval(timerRef.current);
+      clearTimeout(callTimeoutRef.current);
+      endCall();
     };
   }, [userId, apiUrl]);
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting && document.hasFocus()) {
-            const messageId = entry.target.dataset.messageId;
-            const message = messages.find((msg) => msg._id === messageId);
-            if (message && message.recipient._id === localStorage.getItem('userId')) {
-              socket.current.emit('messageRead', { messageId, readerId: localStorage.getItem('userId') });
-            }
-          }
-        });
-      },
-      { threshold: 0.5 }
-    );
-    if (messagesContainerRef.current) {
-      const messageElements = messagesContainerRef.current.querySelectorAll('.message-wrapper');
-      messageElements.forEach((el) => observer.observe(el));
+  const peersRef = useRef([]);
+
+  const createPeer = (userToSignal, callerId, stream) => {
+    const peer = new Peer({
+      initiator: true,
+      trickle: false,
+      config: configuration,
+      stream,
+    });
+
+    peer.on('signal', (signal) => {
+      socket.current.emit('sending_signal', { userToSignal, callerId, signal });
+    });
+
+    peer.on('stream', (remoteStream) => {
+      setRemoteStream(remoteStream);
+    });
+
+    return peer;
+  };
+
+  const addPeer = (incomingSignal, callerId, stream) => {
+    const peer = new Peer({
+      initiator: false,
+      trickle: false,
+      config: configuration,
+      stream,
+    });
+
+    peer.on('signal', (signal) => {
+      socket.current.emit('returning_signal', { signal, callerId });
+    });
+
+    peer.on('stream', (remoteStream) => {
+      setRemoteStream(remoteStream);
+    });
+
+    peer.signal(incomingSignal);
+    return peer;
+  };
+
+  const startVideoCall = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setLocalStream(stream);
+      const roomId = [localStorage.getItem('userId'), userId].sort().join('_');
+      setCallRoomId(roomId);
+      setIsCalling(true);
+      socket.current.emit('video_call_request', { callerId: localStorage.getItem('userId'), recipientId: userId });
+      callTimeoutRef.current = setTimeout(() => {
+        if (isCalling) {
+          endCall();
+          setError('Call timed out. No answer.');
+        }
+      }, 20000);
+    } catch (err) {
+      console.error('Error accessing media devices:', err);
+      setError('Failed to access camera/microphone.');
     }
-    return () => observer.disconnect();
-  }, [messages]);
+  };
 
-  useEffect(() => {
-    const handleScroll = () => {
-      if (messagesContainerRef.current) {
-        const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
-        setIsAtBottom(scrollHeight - scrollTop - clientHeight < 1);
-      }
-    };
-
-    const container = messagesContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', handleScroll);
-      handleScroll();
+  const acceptVideoCall = async () => {
+    setIncomingCall(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setLocalStream(stream);
+      setInCall(true);
+      socket.current.emit('video_call_accept', { callerId: caller, recipientId: localStorage.getItem('userId'), roomId: callRoomId });
+      joinVideoRoom(callRoomId);
+    } catch (err) {
+      console.error('Error accessing media devices:', err);
+      setError('Failed to access camera/microphone.');
     }
+  };
 
-    return () => {
-      if (container) {
-        container.removeEventListener('scroll', handleScroll);
-      }
-    };
-  }, []);
+  const rejectVideoCall = () => {
+    setIncomingCall(false);
+    socket.current.emit('video_call_reject', { callerId: caller });
+  };
+
+  const joinVideoRoom = (roomId) => {
+    socket.current.emit('join_video_room', roomId);
+  };
+
+  const toggleAudioMute = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+      });
+      setIsAudioMuted(!isAudioMuted);
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach((track) => {
+        track.enabled = !track.enabled;
+      });
+      setIsVideoEnabled(!isVideoEnabled);
+    }
+  };
+
+  const endCall = () => {
+    clearTimeout(callTimeoutRef.current);
+    peersRef.current.forEach(({ peer }) => peer.destroy());
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+    }
+    if (isCalling) {
+      socket.current.emit('video_call_cancel', { recipientId: userId });
+    } else if (inCall) {
+      socket.current.emit('end_call', callRoomId);
+    }
+    setInCall(false);
+    setIsCalling(false);
+    setIncomingCall(false);
+    setLocalStream(null);
+    setRemoteStream(null);
+    setCallRoomId(null);
+    setPeers([]);
+    setCaller(null);
+    peersRef.current = [];
+  };
+
+  const switchCamera = () => {
+    setActiveVideo(prev => prev === 'remote' ? 'local' : 'remote');
+  };
 
   const handleFileSelect = (event) => {
     const selected = event.target.files[0];
@@ -622,6 +796,9 @@ const Chat = () => {
               <div className={`status-dot ${recipient.isOnline ? 'online' : 'offline'}`} />
               <span>{recipient.isOnline ? 'Online' : 'Offline'}</span>
             </div>
+            <button onClick={startVideoCall} className="video-call-button" aria-label="Start Video Call">
+              📹
+            </button>
             {userRole === 'doctor' && (
               <Link to={`/diagnosis-prescription/${userId}`} className="diagnosis-button" aria-label="Diagnosis & Prescription">
                 <svg viewBox="0 0 24 24" width="24" height="24">
@@ -683,6 +860,25 @@ const Chat = () => {
         )}
         <div ref={messagesEndRef} />
       </main>
+
+      {(inCall || isCalling || incomingCall) && (
+        <VideoCall
+          localStream={localStream}
+          remoteStream={remoteStream}
+          isCalling={isCalling}
+          incomingCall={incomingCall}
+          inCall={inCall}
+          isAudioMuted={isAudioMuted}
+          isVideoEnabled={isVideoEnabled}
+          activeVideo={activeVideo}
+          onAccept={acceptVideoCall}
+          onReject={rejectVideoCall}
+          onEnd={endCall}
+          onToggleAudio={toggleAudioMute}
+          onToggleVideo={toggleVideo}
+          onSwitchCamera={switchCamera}
+        />
+      )}
 
       <footer className="input-container">
         {replyTo && (

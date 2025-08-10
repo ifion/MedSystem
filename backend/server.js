@@ -1,3 +1,4 @@
+// Modified server.js
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -14,6 +15,7 @@ const messagesRoutes = require('./routes/messageRoutes');
 const cloudinary = require('cloudinary').v2;
 const initializeUsers = require('./utils/initializeUsers');
 const socketIo = require('socket.io');
+const Message = require('./models/Message');
 const User = require('./models/User');
 const testResultRoutes = require('./routes/testResultRoutes');
 
@@ -56,6 +58,8 @@ const connectedUsers = new Map();
 app.set('io', io);
 app.set('connectedUsers', connectedUsers);
 
+const rooms = new Map(); // For video call rooms
+
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
@@ -96,20 +100,6 @@ io.on('connection', (socket) => {
         socket.to(`group_${messageData.groupId}`).emit('newMessage', messageData);
       } else if (messageData.recipientId) {
         io.to(messageData.recipientId).emit('newMessage', messageData); // Use room
-
-        // Notification (assume Notification model exists; add error handling if not)
-        try {
-          const notification = new Notification({
-            recipient: messageData.recipientId,
-            sender: messageData.sender._id,
-            type: 'message',
-            content: 'New message received'
-          });
-          await notification.save();
-          io.to(messageData.recipientId).emit('notification', notification);
-        } catch (notifErr) {
-          console.error('Notification error:', notifErr);
-        }
       }
       socket.emit('messageSent', messageData);
     } catch (error) {
@@ -144,6 +134,47 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Video call signaling
+  socket.on('video_call_request', ({ callerId, recipientId }) => {
+    const roomId = [callerId, recipientId].sort().join('_');
+    io.to(recipientId).emit('incoming_video_call', { callerId, roomId });
+  });
+
+  socket.on('video_call_accept', ({ callerId, recipientId, roomId }) => {
+    io.to(callerId).emit('video_call_accepted', { roomId });
+  });
+
+  socket.on('video_call_reject', ({ callerId }) => {
+    io.to(callerId).emit('video_call_rejected');
+  });
+
+  socket.on('video_call_cancel', ({ recipientId }) => {
+    io.to(recipientId).emit('video_call_canceled');
+  });
+
+  socket.on('join_video_room', (roomId) => {
+    socket.join(roomId);
+    if (rooms.has(roomId)) {
+      rooms.get(roomId).push(socket.id);
+    } else {
+      rooms.set(roomId, [socket.id]);
+    }
+    const otherUsers = rooms.get(roomId).filter(id => id !== socket.id);
+    socket.emit('all_users', otherUsers);
+  });
+
+  socket.on('sending_signal', (payload) => {
+    io.to(payload.userToSignal).emit('user_joined', { signal: payload.signal, callerId: payload.callerId });
+  });
+
+  socket.on('returning_signal', (payload) => {
+    io.to(payload.callerId).emit('receiving_returned_signal', { signal: payload.signal, id: socket.id });
+  });
+
+  socket.on('end_call', (roomId) => {
+    socket.to(roomId).emit('call_ended');
+  });
+
   socket.on('disconnect', () => {
     let userId;
     for (const [key, value] of connectedUsers.entries()) {
@@ -157,6 +188,17 @@ io.on('connection', (socket) => {
       io.emit('userStatusChange', { userId, isOnline: false });
       console.log(`User ${userId} disconnected`);
     }
+    // Clean up rooms
+    rooms.forEach((value, key) => {
+      if (value.includes(socket.id)) {
+        rooms.set(key, value.filter(id => id !== socket.id));
+        if (rooms.get(key).length === 0) {
+          rooms.delete(key);
+        } else {
+          socket.to(key).emit('user_left', socket.id);
+        }
+      }
+    });
     console.log('Client disconnected:', socket.id);
   });
 });
