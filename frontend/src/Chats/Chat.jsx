@@ -67,12 +67,11 @@ const OptimizedMessage = memo(({
     touchStartX.current = null;
   }, []);
 
-  const isSentByCurrentUser = String(message.sender?._id) === String(userId) || String(message.sender) === String(userId);
-
   return (
     <div 
       ref={messageRef}
-      className={`message-wrapper ${isSentByCurrentUser ? 'sent' : 'received'}`}
+      className={`message-wrapper ${message.sender?._id?.toString() === userId ? 'sent' : 'received'}`}
+      style={{ alignSelf: message.sender?._id?.toString() === userId ? 'flex-end' : 'flex-start' }}
       onTouchStart={handlePressStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handlePressEnd}
@@ -247,6 +246,7 @@ const Chat = () => {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
+    const currentUserId = localStorage.getItem('userId');
     const fetchData = async () => {
       try {
         const [messagesRes, canChatRes, recipientRes] = await Promise.all([
@@ -288,26 +288,37 @@ const Chat = () => {
     };
 
     socket.current = io($apiUrl, {
-  query: { userId: String(localStorage.getItem('userId')), recipientId: String(userId) },
-  transports: ['websocket']
+      query: { userId: currentUserId, recipientId: userId },
+      transports: ['websocket'] // Force WebSocket for real-time
     });
-    socket.current.emit('login', String(localStorage.getItem('userId')));
+    // Add connection debug
+    socket.current.on('connect', () => console.log('Socket connected'));
+    socket.current.on('connect_error', (err) => console.error('Socket connection error:', err));
+
+    socket.current.emit('login', currentUserId);
+
     socket.current.on('newMessage', (msg) => {
-      setMessages((prev) => {
-        if (prev.some(m => m._id === msg._id || m.clientId === msg.clientId)) return prev;
-        return [...prev, msg];
-      });
-      scrollToBottom();
-      if (msg.recipient._id === localStorage.getItem('userId')) {
-        socket.current.emit('messageDelivered', { messageId: msg._id });
-        if (document.hasFocus()) {
-          socket.current.emit('messageRead', { messageId: msg._id, readerId: localStorage.getItem('userId') });
+      const isForCurrentChat = (msg.sender._id === userId && msg.recipient._id === currentUserId);
+      if (isForCurrentChat) {
+        setMessages((prev) => {
+          if (prev.some(m => m._id === msg._id || m.clientId === msg.clientId)) return prev;
+          return [...prev, msg];
+        });
+        scrollToBottom();
+        if (msg.recipient._id === currentUserId) {
+          socket.current.emit('messageDelivered', { messageId: msg._id });
+          if (document.hasFocus()) {
+            socket.current.emit('messageRead', { messageId: msg._id, readerId: currentUserId });
+          }
         }
       }
     });
 
     socket.current.on('messageSent', (msg) => {
-      setMessages((prev) => prev.map((m) => (m.clientId === msg.clientId ? msg : m)));
+      const isForCurrentChat = (msg.sender._id === currentUserId && msg.recipient._id === userId);
+      if (isForCurrentChat) {
+        setMessages((prev) => prev.map((m) => (m.clientId === msg.clientId ? msg : m)));
+      }
     });
 
     socket.current.on('messageStatusUpdate', ({ messageId, status }) => {
@@ -321,9 +332,11 @@ const Chat = () => {
 
     // Video call events
     socket.current.on('incoming_video_call', ({ callerId, roomId }) => {
-      setIncomingCall(true);
-      setCaller(callerId);
-      setCallRoomId(roomId);
+      if (callerId === userId) {
+        setIncomingCall(true);
+        setCaller(callerId);
+        setCallRoomId(roomId);
+      }
     });
 
     socket.current.on('video_call_accepted', ({ roomId }) => {
@@ -625,13 +638,14 @@ const Chat = () => {
     if (!inputText && !file) return;
 
     const token = localStorage.getItem('token');
+    const currentUserId = localStorage.getItem('userId');
     const tempId = `temp-${uuidv4()}`;
     const clientId = uuidv4();
     const newMsg = {
       _id: tempId,
       clientId,
       content: inputText,
-      sender: { _id: localStorage.getItem('userId'), name: 'You' },
+      sender: { _id: currentUserId, name: 'You' },
       recipient: { _id: userId, name: recipient?.name },
       status: 'sent',
       createdAt: new Date().toISOString(),

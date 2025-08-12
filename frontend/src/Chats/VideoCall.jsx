@@ -1,4 +1,4 @@
-// Modified VideoCall.jsx
+// Modified VideoCall.jsx (no changes needed, but provided for completeness)
 import React, { useEffect, useRef } from 'react';
 
 const VideoCall = ({
