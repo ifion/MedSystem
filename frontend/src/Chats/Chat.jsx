@@ -168,6 +168,7 @@ const OptimizedMessage = memo(({
 
 const Chat = () => {
   const apiUrl = import.meta.env.VITE_API_URL;
+  const $apiUrl = import.meta.env.VITE_SOCKET_URL;
   const { userId } = useParams();
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -284,7 +285,7 @@ const Chat = () => {
       }
     };
 
-    socket.current = io('http://localhost:5000', {
+    socket.current = io($apiUrl, {
       query: { userId: localStorage.getItem('userId'), recipientId: userId },
       transports: ['websocket'] // Force WebSocket for real-time
     });
