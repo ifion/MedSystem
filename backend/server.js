@@ -1,4 +1,4 @@
-// Modified server.js
+// server.js
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -19,12 +19,11 @@ const Message = require('./models/Message');
 const User = require('./models/User');
 const testResultRoutes = require('./routes/testResultRoutes');
 
-
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: '*', // Tighten in production
+    origin: '*', // tighten in production
     methods: ['GET', 'POST']
   }
 });
@@ -64,43 +63,31 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
   socket.on('login', (userId) => {
-    connectedUsers.set(userId, socket.id);
-    io.emit('userStatusChange', { userId, isOnline: true });
-    socket.join(userId);
-    console.log(`User ${userId} logged in with socket ${socket.id}`);
+    const uid = String(userId);
+    connectedUsers.set(uid, socket.id);
+    socket.join(uid);
+    io.emit('userStatusChange', { userId: uid, isOnline: true });
+    console.log(`User ${uid} logged in with socket ${socket.id}`);
   });
 
-  socket.on('typing', async ({ senderId, recipientId, groupId }) => {
+  socket.on('typing', async ({ senderId, recipientId }) => {
     try {
-      const user = await User.findById(senderId).select('username');
-      if (!user) return;
-      const username = user.username;
-      if (groupId) {
-        socket.to(`group_${groupId}`).emit('userTyping', { userId: senderId, username });
-      } else if (recipientId) {
-        io.to(recipientId).emit('userTyping', { userId: senderId, username }); // Use room
-      }
+      const username = (await User.findById(senderId).select('username'))?.username;
+      if (!username) return;
+      io.to(String(recipientId)).emit('userTyping', { userId: String(senderId), username });
     } catch (error) {
       console.error('Error fetching username:', error);
     }
   });
 
-  socket.on('stopTyping', ({ senderId, recipientId, groupId }) => {
-    if (groupId) {
-      socket.to(`group_${groupId}`).emit('userStoppedTyping', { userId: senderId });
-    } else if (recipientId) {
-      io.to(recipientId).emit('userStoppedTyping', { userId: senderId }); // Use room
-    }
+  socket.on('stopTyping', ({ senderId, recipientId }) => {
+    io.to(String(recipientId)).emit('userStoppedTyping', { userId: String(senderId) });
   });
 
   socket.on('sendMessage', async (messageData) => {
-    console.log('SendMessage received for recipient:', messageData.recipientId);
     try {
-      if (messageData.groupId) {
-        socket.to(`group_${messageData.groupId}`).emit('newMessage', messageData);
-      } else if (messageData.recipientId) {
-        io.to(messageData.recipientId).emit('newMessage', messageData); // Use room
-      }
+      io.to(String(messageData.recipientId)).emit('newMessage', messageData);
+      io.to(String(messageData.sender?._id || messageData.sender)).emit('newMessage', messageData);
       socket.emit('messageSent', messageData);
     } catch (error) {
       console.error('SendMessage error:', error);
@@ -114,20 +101,20 @@ io.on('connection', (socket) => {
       if (message && message.status === 'sent') {
         message.status = 'delivered';
         await message.save();
-        io.to(message.sender.toString()).emit('messageStatusUpdate', { messageId, status: 'delivered' }); // Use room
+        io.to(String(message.sender)).emit('messageStatusUpdate', { messageId, status: 'delivered' });
       }
     } catch (error) {
       console.error('Error marking message as delivered:', error);
     }
   });
 
-  socket.on('messageRead', async ({ messageId, readerId }) => {
+  socket.on('messageRead', async ({ messageId }) => {
     try {
       const message = await Message.findById(messageId);
       if (message && message.status !== 'read') {
         message.status = 'read';
         await message.save();
-        io.to(message.sender.toString()).emit('messageStatusUpdate', { messageId, status: 'read' }); // Use room
+        io.to(String(message.sender)).emit('messageStatusUpdate', { messageId, status: 'read' });
       }
     } catch (error) {
       console.error('Error marking message as read:', error);
@@ -136,20 +123,37 @@ io.on('connection', (socket) => {
 
   // Video call signaling
   socket.on('video_call_request', ({ callerId, recipientId }) => {
-    const roomId = [callerId, recipientId].sort().join('_');
-    io.to(recipientId).emit('incoming_video_call', { callerId, roomId });
+    const rid = String(recipientId);
+    const cid = String(callerId);
+    const roomId = [cid, rid].sort().join('_');
+    const recipientSocket = connectedUsers.get(rid);
+    if (recipientSocket) {
+      io.to(recipientSocket).emit('incoming_video_call', { callerId: cid, roomId });
+    }
   });
 
-  socket.on('video_call_accept', ({ callerId, recipientId, roomId }) => {
-    io.to(callerId).emit('video_call_accepted', { roomId });
+  socket.on('video_call_accept', ({ callerId, roomId }) => {
+    const cid = String(callerId);
+    const callerSocket = connectedUsers.get(cid);
+    if (callerSocket) {
+      io.to(callerSocket).emit('video_call_accepted', { roomId });
+    }
   });
 
   socket.on('video_call_reject', ({ callerId }) => {
-    io.to(callerId).emit('video_call_rejected');
+    const cid = String(callerId);
+    const callerSocket = connectedUsers.get(cid);
+    if (callerSocket) {
+      io.to(callerSocket).emit('video_call_rejected');
+    }
   });
 
   socket.on('video_call_cancel', ({ recipientId }) => {
-    io.to(recipientId).emit('video_call_canceled');
+    const rid = String(recipientId);
+    const recipientSocket = connectedUsers.get(rid);
+    if (recipientSocket) {
+      io.to(recipientSocket).emit('video_call_canceled');
+    }
   });
 
   socket.on('join_video_room', (roomId) => {
@@ -188,7 +192,6 @@ io.on('connection', (socket) => {
       io.emit('userStatusChange', { userId, isOnline: false });
       console.log(`User ${userId} disconnected`);
     }
-    // Clean up rooms
     rooms.forEach((value, key) => {
       if (value.includes(socket.id)) {
         rooms.set(key, value.filter(id => id !== socket.id));

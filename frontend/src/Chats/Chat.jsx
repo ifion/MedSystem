@@ -67,10 +67,12 @@ const OptimizedMessage = memo(({
     touchStartX.current = null;
   }, []);
 
+  const isSentByCurrentUser = String(message.sender?._id) === String(userId) || String(message.sender) === String(userId);
+
   return (
     <div 
       ref={messageRef}
-      className={`message-wrapper ${message.sender?._id?.toString() === userId ? 'sent' : 'received'}`}
+      className={`message-wrapper ${isSentByCurrentUser ? 'sent' : 'received'}`}
       onTouchStart={handlePressStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handlePressEnd}
@@ -286,15 +288,10 @@ const Chat = () => {
     };
 
     socket.current = io($apiUrl, {
-      query: { userId: localStorage.getItem('userId'), recipientId: userId },
-      transports: ['websocket'] // Force WebSocket for real-time
+  query: { userId: String(localStorage.getItem('userId')), recipientId: String(userId) },
+  transports: ['websocket']
     });
-    // Add connection debug
-    socket.current.on('connect', () => console.log('Socket connected'));
-    socket.current.on('connect_error', (err) => console.error('Socket connection error:', err));
-
-    socket.current.emit('login', localStorage.getItem('userId'));
-
+    socket.current.emit('login', String(localStorage.getItem('userId')));
     socket.current.on('newMessage', (msg) => {
       setMessages((prev) => {
         if (prev.some(m => m._id === msg._id || m.clientId === msg.clientId)) return prev;
