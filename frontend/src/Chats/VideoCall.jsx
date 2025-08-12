@@ -1,5 +1,5 @@
-// Modified VideoCall.jsx (no changes needed, but provided for completeness)
 import React, { useEffect, useRef } from 'react';
+import '../Designs/Chat.css';
 
 const VideoCall = ({
   localStream,
