@@ -426,6 +426,7 @@ const Chat = () => {
       socket.current.off('user_left');
       socket.current.off('userStatusChange');
       socket.current.off('messageError');
+      socket.current.disconnect();
       clearInterval(timerRef.current);
       clearTimeout(callTimeoutRef.current);
       endCall();
