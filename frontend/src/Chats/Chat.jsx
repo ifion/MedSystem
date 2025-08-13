@@ -71,7 +71,6 @@ const OptimizedMessage = memo(({
     <div 
       ref={messageRef}
       className={`message-wrapper ${message.sender?._id?.toString() === userId ? 'sent' : 'received'}`}
-      style={{ alignSelf: message.sender?._id?.toString() === userId ? 'flex-end' : 'flex-start' }}
       onTouchStart={handlePressStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handlePressEnd}
@@ -412,7 +411,6 @@ const Chat = () => {
       socket.current.off('receiving_returned_signal');
       socket.current.off('call_ended');
       socket.current.off('user_left');
-      socket.current.disconnect();
       clearInterval(timerRef.current);
       clearTimeout(callTimeoutRef.current);
       endCall();

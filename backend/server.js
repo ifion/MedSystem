@@ -1,4 +1,3 @@
-// server.js
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -9,7 +8,7 @@ const adminRoutes = require('./routes/admin');
 const doctorRoutes = require('./routes/doctorRoutes');
 const patientRoutes = require('./routes/patientRoutes');
 const appointmentRoutes = require('./routes/appointmentRoutes');
-const diagnosisRoutes = require('./routes/diagnosisRoutes'); 
+const diagnosisRoutes = require('./routes/diagnosisRoutes');
 const prescriptionRoutes = require('./routes/prescriptionRoutes');
 const messagesRoutes = require('./routes/messageRoutes');
 const cloudinary = require('cloudinary').v2;
@@ -59,16 +58,34 @@ app.set('connectedUsers', connectedUsers);
 
 const rooms = new Map(); // For video call rooms
 
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+// ====================================================================
+// START: SOLUTION IMPLEMENTATION
+// ====================================================================
 
-  socket.on('login', (userId) => {
-    const uid = String(userId);
-    connectedUsers.set(uid, socket.id);
-    socket.join(uid);
-    io.emit('userStatusChange', { userId: uid, isOnline: true });
-    console.log(`User ${uid} logged in with socket ${socket.id}`);
-  });
+// 1. Add middleware to handle authentication on connection
+io.use((socket, next) => {
+  const userId = socket.handshake.query.userId;
+  if (!userId) {
+    console.error('Connection rejected: No userId provided in query.');
+    return next(new Error('Authentication error: No userId provided.'));
+  }
+  socket.userId = String(userId); // Attach userId to the socket object
+  next();
+});
+
+io.on('connection', (socket) => {
+  // The 'socket.userId' is now available thanks to the middleware
+  const userId = socket.userId;
+  console.log(`Client connected: ${socket.id} for user: ${userId}`);
+
+  // 2. Register the user immediately upon connection
+  connectedUsers.set(userId, socket.id);
+  socket.join(userId);
+  io.emit('userStatusChange', { userId, isOnline: true });
+  console.log(`User ${userId} is online with socket ${socket.id}`);
+
+  // The 'login' event is no longer needed
+  // socket.on('login', ...) // <== REMOVED
 
   socket.on('typing', async ({ senderId, recipientId }) => {
     try {
@@ -89,6 +106,7 @@ io.on('connection', (socket) => {
       io.to(String(messageData.recipientId)).emit('newMessage', messageData);
       io.to(String(messageData.sender?._id || messageData.sender)).emit('newMessage', messageData);
       socket.emit('messageSent', messageData);
+      console.log('mesageSent', messageData);
     } catch (error) {
       console.error('SendMessage error:', error);
       socket.emit('messageError', { messageId: messageData._id, error: 'Failed to deliver message' });
@@ -121,7 +139,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Video call signaling
+  // Video call signaling (no changes needed here)
   socket.on('video_call_request', ({ callerId, recipientId }) => {
     const rid = String(recipientId);
     const cid = String(callerId);
@@ -180,31 +198,30 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    let userId;
-    for (const [key, value] of connectedUsers.entries()) {
-      if (value === socket.id) {
-        userId = key;
-        break;
-      }
-    }
-    if (userId) {
+    console.log(`Client disconnected: ${socket.id}`);
+    
+    // 3. Simplify the disconnect logic
+    if (userId) { // The userId is from the closure of the connection handler
       connectedUsers.delete(userId);
       io.emit('userStatusChange', { userId, isOnline: false });
-      console.log(`User ${userId} disconnected`);
+      console.log(`User ${userId} disconnected and went offline`);
     }
+
+    // Clean up video call rooms
     rooms.forEach((value, key) => {
       if (value.includes(socket.id)) {
-        rooms.set(key, value.filter(id => id !== socket.id));
-        if (rooms.get(key).length === 0) {
+        const updatedRoom = value.filter(id => id !== socket.id);
+        if (updatedRoom.length === 0) {
           rooms.delete(key);
         } else {
+          rooms.set(key, updatedRoom);
           socket.to(key).emit('user_left', socket.id);
         }
       }
     });
-    console.log('Client disconnected:', socket.id);
   });
 });
+
 
 initializeUsers().catch((err) => console.error('User initialization failed:', err));
 
