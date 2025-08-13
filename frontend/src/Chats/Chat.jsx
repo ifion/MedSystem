@@ -167,8 +167,7 @@ const OptimizedMessage = memo(({
 });
 
 const Chat = () => {
-  const apiUrl = import.meta.env.VITE_API_URL;
-  const $apiUrl = import.meta.env.VITE_SOCKET_URL;
+  const apiUrl = import.meta.env.VITE_SOCKET_URL;
   const { userId } = useParams();
   const [messages, setMessages] = useState([]);
   const [inputText, setInputText] = useState('');
@@ -249,13 +248,13 @@ const Chat = () => {
     const fetchData = async () => {
       try {
         const [messagesRes, canChatRes, recipientRes] = await Promise.all([
-          axios.get(`${apiUrl}/messages/${userId}`, {
+          axios.get(`${apiUrl}/api/messages/${userId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           }),
-          axios.get(`${apiUrl}/appointments/check-chat/${userId}`, {
+          axios.get(`${apiUrl}/api/appointments/check-chat/${userId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           }),
-          axios.get(`${apiUrl}/auth/user/${userId}`, {
+          axios.get(`${apiUrl}/api/auth/user/${userId}`, {
             headers: { 'Authorization': `Bearer ${token}` }
           }),
         ]);
@@ -286,7 +285,7 @@ const Chat = () => {
       }
     };
 
-    socket.current = io($apiUrl, {
+    socket.current = io(apiUrl, {
       query: { userId: currentUserId, recipientId: userId },
       transports: ['websocket'] // Force WebSocket for real-time
     });
@@ -685,7 +684,7 @@ const Chat = () => {
       if (disappearTime > 0) formData.append('disappearAfter', disappearTime);
       formData.append('clientId', clientId);
 
-      const res = await axios.post(`${apiUrl}/messages`, formData, {
+      const res = await axios.post(`${apiUrl}/api/messages`, formData, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'multipart/form-data',
@@ -720,7 +719,7 @@ const Chat = () => {
   const deleteMessage = useCallback(async (id) => {
     const token = localStorage.getItem('token');
     try {
-      await axios.delete(`${apiUrl}/messages/${id}`, {
+      await axios.delete(`${apiUrl}/api/messages/${id}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       setMessages((prev) => 
@@ -737,7 +736,7 @@ const Chat = () => {
   const undoDeleteMessage = useCallback(async (id) => {
     const token = localStorage.getItem('token');
     try {
-      const { data: restoredMsg } = await axios.put(`${apiUrl}/messages/restore/${id}`, null, {
+      const { data: restoredMsg } = await axios.put(`${apiUrl}/api/messages/restore/${id}`, null, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       setMessages((prev) => 
@@ -756,7 +755,7 @@ const Chat = () => {
     const token = localStorage.getItem('token');
     try {
       const { data: updatedMsg } = await axios.put(
-        `${apiUrl}/messages/${id}`,
+        `${apiUrl}/api/messages/${id}`,
         { content: editText },
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
