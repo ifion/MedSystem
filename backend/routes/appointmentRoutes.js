@@ -1,9 +1,10 @@
+// routes/appointments.js
 const express = require('express');
 const router = express.Router();
-const auth = require('../middleware/auth');
+const authenticate = require('../middleware/authenticate');
 const Appointment = require('../models/Appointment');
 
-router.get('/check-chat/:otherUserId', auth, async (req, res) => {
+router.get('/check-chat/:otherUserId', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
     const otherUserId = req.params.otherUserId;

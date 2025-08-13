@@ -1,3 +1,4 @@
+// Merged server.js with multi-socket support, room-based chat, and concurrent 1:1 video calls
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -22,8 +23,8 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: '*', // tighten in production
-    methods: ['GET', 'POST']
+    origin: process.env.CLIENT_URL,
+    methods: ['GET', 'POST'],
   }
 });
 
@@ -33,7 +34,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-app.use(cors());
+app.use(cors({ origin: process.env.CLIENT_URL }));
 app.use(express.json());
 
 connectDB();
@@ -52,64 +53,82 @@ app.get('/', (req, res) => {
   res.send('API is running...');
 });
 
-const connectedUsers = new Map();
+const connectedUsers = new Map(); // userId => Set of socket.ids
 app.set('io', io);
 app.set('connectedUsers', connectedUsers);
 
 const rooms = new Map(); // For video call rooms
 
-// ====================================================================
-// START: SOLUTION IMPLEMENTATION
-// ====================================================================
-
-// 1. Add middleware to handle authentication on connection
+// Socket.IO middleware for authentication
 io.use((socket, next) => {
   const userId = socket.handshake.query.userId;
   if (!userId) {
     console.error('Connection rejected: No userId provided in query.');
     return next(new Error('Authentication error: No userId provided.'));
   }
-  socket.userId = String(userId); // Attach userId to the socket object
+  socket.userId = String(userId);
   next();
 });
 
-io.on('connection', (socket) => {
-  // The 'socket.userId' is now available thanks to the middleware
+io.on('connection', async (socket) => {
   const userId = socket.userId;
   console.log(`Client connected: ${socket.id} for user: ${userId}`);
 
-  // 2. Register the user immediately upon connection
-  connectedUsers.set(userId, socket.id);
-  socket.join(userId);
-  io.emit('userStatusChange', { userId, isOnline: true });
-  console.log(`User ${userId} is online with socket ${socket.id}`);
+  // Derive roomId if recipientId is provided for 1:1 chat
+  const recipientId = socket.handshake.query.recipientId;
+  let chatRoomId;
+  if (recipientId) {
+    chatRoomId = [userId, String(recipientId)].sort().join('_');
+    socket.join(chatRoomId);
+  }
 
-  // The 'login' event is no longer needed
-  // socket.on('login', ...) // <== REMOVED
+  // Register user with multi-socket support
+  if (!connectedUsers.has(userId)) {
+    connectedUsers.set(userId, new Set());
+  }
+  connectedUsers.get(userId).add(socket.id);
+
+  if (connectedUsers.get(userId).size === 1) {
+    try {
+      await User.findByIdAndUpdate(userId, { isOnline: true });
+      io.emit('userStatusChange', { userId, isOnline: true });
+    } catch (err) {
+      console.error('Error updating online status:', err);
+    }
+  }
+  console.log(`User ${userId} is online with socket ${socket.id}`);
 
   socket.on('typing', async ({ senderId, recipientId }) => {
     try {
+      const typingRoomId = [String(senderId), String(recipientId)].sort().join('_');
       const username = (await User.findById(senderId).select('username'))?.username;
       if (!username) return;
-      io.to(String(recipientId)).emit('userTyping', { userId: String(senderId), username });
+      socket.to(typingRoomId).emit('userTyping', { userId: String(senderId), username });
     } catch (error) {
       console.error('Error fetching username:', error);
     }
   });
 
   socket.on('stopTyping', ({ senderId, recipientId }) => {
-    io.to(String(recipientId)).emit('userStoppedTyping', { userId: String(senderId) });
+    const typingRoomId = [String(senderId), String(recipientId)].sort().join('_');
+    socket.to(typingRoomId).emit('userStoppedTyping', { userId: String(senderId) });
   });
 
-  socket.on('sendMessage', async (messageData) => {
+  socket.on('sendMessage', async (messageData, callback) => {
     try {
-      io.to(String(messageData.recipientId)).emit('newMessage', messageData);
-      io.to(String(messageData.sender?._id || messageData.sender)).emit('newMessage', messageData);
+      const messageRoomId = [
+        String(messageData.sender?._id || messageData.sender),
+        String(messageData.recipientId)
+      ].sort().join('_');
+
+      io.to(messageRoomId).emit('newMessage', messageData);
       socket.emit('messageSent', messageData);
-      console.log('mesageSent', messageData);
+      console.log('messageSent', messageData);
+      if (callback) callback({ status: 'sent' });
     } catch (error) {
       console.error('SendMessage error:', error);
       socket.emit('messageError', { messageId: messageData._id, error: 'Failed to deliver message' });
+      if (callback) callback({ status: 'failed' });
     }
   });
 
@@ -119,7 +138,11 @@ io.on('connection', (socket) => {
       if (message && message.status === 'sent') {
         message.status = 'delivered';
         await message.save();
-        io.to(String(message.sender)).emit('messageStatusUpdate', { messageId, status: 'delivered' });
+        const senderId = message.sender.toString();
+        const senderSockets = connectedUsers.get(senderId) || [];
+        for (const sid of senderSockets) {
+          io.to(sid).emit('messageStatusUpdate', { messageId, status: 'delivered' });
+        }
       }
     } catch (error) {
       console.error('Error marking message as delivered:', error);
@@ -132,96 +155,108 @@ io.on('connection', (socket) => {
       if (message && message.status !== 'read') {
         message.status = 'read';
         await message.save();
-        io.to(String(message.sender)).emit('messageStatusUpdate', { messageId, status: 'read' });
+        const senderId = message.sender.toString();
+        const senderSockets = connectedUsers.get(senderId) || [];
+        for (const sid of senderSockets) {
+          io.to(sid).emit('messageStatusUpdate', { messageId, status: 'read' });
+        }
       }
     } catch (error) {
       console.error('Error marking message as read:', error);
     }
   });
 
-  // Video call signaling (no changes needed here)
-  socket.on('video_call_request', ({ callerId, recipientId }) => {
+  // Video call signaling (supports concurrent 1:1 calls via unique roomIds)
+  socket.on('video_call_request', ({ callerId, recipientId }, callback) => {
     const rid = String(recipientId);
     const cid = String(callerId);
-    const roomId = [cid, rid].sort().join('_');
-    const recipientSocket = connectedUsers.get(rid);
-    if (recipientSocket) {
-      io.to(recipientSocket).emit('incoming_video_call', { callerId: cid, roomId });
+    const callRoomId = [cid, rid].sort().join('_');
+    const recipientSockets = connectedUsers.get(rid) || [];
+    for (const sid of recipientSockets) {
+      io.to(sid).emit('incoming_video_call', { callerId: cid, roomId: callRoomId });
     }
+    if (callback) callback({ status: 'requested' });
   });
 
   socket.on('video_call_accept', ({ callerId, roomId }) => {
     const cid = String(callerId);
-    const callerSocket = connectedUsers.get(cid);
-    if (callerSocket) {
-      io.to(callerSocket).emit('video_call_accepted', { roomId });
+    const callerSockets = connectedUsers.get(cid) || [];
+    for (const sid of callerSockets) {
+      io.to(sid).emit('video_call_accepted', { roomId });
     }
   });
 
   socket.on('video_call_reject', ({ callerId }) => {
     const cid = String(callerId);
-    const callerSocket = connectedUsers.get(cid);
-    if (callerSocket) {
-      io.to(callerSocket).emit('video_call_rejected');
+    const callerSockets = connectedUsers.get(cid) || [];
+    for (const sid of callerSockets) {
+      io.to(sid).emit('video_call_rejected');
     }
   });
 
   socket.on('video_call_cancel', ({ recipientId }) => {
     const rid = String(recipientId);
-    const recipientSocket = connectedUsers.get(rid);
-    if (recipientSocket) {
-      io.to(recipientSocket).emit('video_call_canceled');
+    const recipientSockets = connectedUsers.get(rid) || [];
+    for (const sid of recipientSockets) {
+      io.to(sid).emit('video_call_canceled');
     }
   });
 
   socket.on('join_video_room', (roomId) => {
     socket.join(roomId);
-    if (rooms.has(roomId)) {
-      rooms.get(roomId).push(socket.id);
-    } else {
-      rooms.set(roomId, [socket.id]);
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, new Set());
     }
-    const otherUsers = rooms.get(roomId).filter(id => id !== socket.id);
-    socket.emit('all_users', otherUsers);
+    rooms.get(roomId).add(socket.id);
+    const otherUsers = Array.from(rooms.get(roomId)).filter(id => id !== socket.id);
+    socket.emit('all_users', otherUsers); // Only send to the new joiner to initiate peers
   });
 
-  socket.on('sending_signal', (payload) => {
-    io.to(payload.userToSignal).emit('user_joined', { signal: payload.signal, callerId: payload.callerId });
+  socket.on('sending_signal', ({ userToSignal, callerId, signal }) => {
+    io.to(userToSignal).emit('user_joined', { signal, callerId: socket.id });
   });
 
-  socket.on('returning_signal', (payload) => {
-    io.to(payload.callerId).emit('receiving_returned_signal', { signal: payload.signal, id: socket.id });
+  socket.on('returning_signal', ({ signal, callerId }) => {
+    io.to(callerId).emit('receiving_returned_signal', { signal, id: socket.id });
   });
 
   socket.on('end_call', (roomId) => {
-    socket.to(roomId).emit('call_ended');
+    io.in(roomId).emit('call_ended');
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log(`Client disconnected: ${socket.id}`);
-    
-    // 3. Simplify the disconnect logic
-    if (userId) { // The userId is from the closure of the connection handler
-      connectedUsers.delete(userId);
-      io.emit('userStatusChange', { userId, isOnline: false });
-      console.log(`User ${userId} disconnected and went offline`);
+
+    if (userId) {
+      const userSockets = connectedUsers.get(userId);
+      if (userSockets) {
+        userSockets.delete(socket.id);
+        if (userSockets.size === 0) {
+          connectedUsers.delete(userId);
+          try {
+            await User.findByIdAndUpdate(userId, { isOnline: false });
+            io.emit('userStatusChange', { userId, isOnline: false });
+          } catch (err) {
+            console.error('Error updating offline status:', err);
+          }
+          console.log(`User ${userId} disconnected and went offline`);
+        }
+      }
     }
 
     // Clean up video call rooms
     rooms.forEach((value, key) => {
-      if (value.includes(socket.id)) {
-        const updatedRoom = value.filter(id => id !== socket.id);
-        if (updatedRoom.length === 0) {
+      if (value.has(socket.id)) {
+        value.delete(socket.id);
+        if (value.size === 0) {
           rooms.delete(key);
         } else {
-          rooms.set(key, updatedRoom);
-          socket.to(key).emit('user_left', socket.id);
+          io.in(key).emit('user_left', socket.id);
         }
       }
     });
   });
 });
-
 
 initializeUsers().catch((err) => console.error('User initialization failed:', err));
 

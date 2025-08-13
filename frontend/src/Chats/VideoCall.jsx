@@ -1,3 +1,4 @@
+// VideoCall.jsx remains unchanged as provided, supporting 1:1 calls
 import React, { useEffect, useRef } from 'react';
 import '../Designs/Chat.css';
 

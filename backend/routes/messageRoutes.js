@@ -1,209 +1,162 @@
+// routes/messages.js
 const express = require('express');
 const router = express.Router();
 const authenticate = require('../middleware/authenticate');
-const authorize = require('../middleware/authorize');
 const Message = require('../models/Message');
-const multer = require('multer');
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
-const dotenv = require('dotenv');
+const Appointment = require('../models/Appointment');
+const User = require('../models/User');
+const mediaUpload = require('../middleware/upload');
 
-dotenv.config();
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+// Helper function to check if chat is allowed (only on appointment days)
+async function canChat(userId1, userId2) {
+  const today = new Date();
+  const start = new Date(today.setHours(0, 0, 0, 0));
+  const end = new Date(today.setHours(23, 59, 59, 999));
+  const appointment = await Appointment.findOne({
+    $or: [
+      { patientId: userId1, doctorId: userId2, status: 'confirmed', dateTime: { $gte: start, $lte: end } },
+      { patientId: userId2, doctorId: userId1, status: 'confirmed', dateTime: { $gte: start, $lte: end } },
+    ],
+  });
+  return !!appointment;
+}
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: (req, file) => ({
-    folder: 'uploads/chat',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'webm', 'mp3'],
-    public_id: `${Date.now()}-${file.originalname}`,
-    resource_type: file.mimetype.startsWith('audio/') ? 'video' : 'auto',
-  }),
-});
-
-const upload = multer({ 
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 'audio/webm', 'audio/mp3'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type'));
-    }
-  }
-});
-
-router.get('/:userId', authenticate, authorize(['admin', 'doctor', 'patient']), async (req, res) => {
+// GET /api/messages/:userId - Get messages between current user and specified user
+router.get('/:userId', authenticate, async (req, res) => {
   try {
+    const { userId } = req.params;
     const messages = await Message.find({
       $or: [
-        { sender: req.user.id, recipient: req.params.userId },
-        { sender: req.params.userId, recipient: req.user.id }
-      ]
+        { sender: req.user.id, recipient: userId },
+        { sender: userId, recipient: req.user.id },
+      ],
     })
       .sort({ createdAt: 1 })
-      .populate('sender', 'name username isOnline')
-      .populate('recipient', 'name username isOnline')
-      .populate('replyTo', 'content mediaUrl');
-    
+      .populate('sender', 'name _id')
+      .populate('recipient', 'name _id')
+      .populate('replyTo', 'content _id');
     res.json(messages);
   } catch (err) {
-    console.error('Error fetching messages:', err);
-    res.status(500).json({ msg: 'Server error' });
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-router.post('/', authenticate, authorize(['admin', 'doctor', 'patient']), upload.single('media'),
-  async (req, res) => {
-    try {
-      const { recipientId, groupId, content, replyTo, clientId, disappearAfter } = req.body;
-      const mediaUrl = req.file ? req.file.path : null;
-
-      if (!content && !mediaUrl) {
-        return res.status(400).json({ msg: 'Either text content or a media file is required.' });
-      }
-
-      let messageData = {
-        sender: req.user.id,
-        mediaUrl,
-        status: 'sent',
-        clientId,
-        disappearAfter: disappearAfter ? parseInt(disappearAfter) : 0
-      };
-
-      if (content) messageData.content = content;
-      if (replyTo) messageData.replyTo = replyTo;
-
-      if (groupId) {
-        return res.status(400).json({ msg: 'Group chats are not supported in this context.' });
-      } else if (recipientId) {
-        messageData.recipient = recipientId;
-      } else {
-        return res.status(400).json({ msg: 'RecipientId is required' });
-      }
-
-      const message = new Message(messageData);
-      await message.save();
-
-      const populatedMessage = await Message.findById(message._id)
-        .populate('sender', 'name username isOnline')
-        .populate('recipient', 'name username isOnline')
-        .populate('replyTo', 'content mediaUrl');
-
-      // No emits here; handled in server.js 'sendMessage'
-
-      res.json(populatedMessage);
-
-    } catch (err) {
-      console.error('Error sending message:', err);
-      res.status(500).json({ msg: 'Failed to send message' });
-    }
-  }
-);
-
-router.put('/:messageId', authenticate, authorize(['admin', 'doctor', 'patient']), async (req, res) => {
+// POST /api/messages - Send a new message (with media upload support)
+router.post('/', authenticate, mediaUpload.single('media'), async (req, res) => {
   try {
-    const message = await Message.findById(req.params.messageId);
-    
-    if (!message) {
-      return res.status(404).json({ msg: 'Message not found' });
+    const { recipientId, content, replyTo, disappearAfter, clientId } = req.body;
+    if (!recipientId) {
+      return res.status(400).json({ message: 'Recipient ID is required' });
     }
-
-    if (message.sender.toString() !== req.user.id) {
-      return res.status(401).json({ msg: 'Not authorized' });
+    if (!await canChat(req.user.id, recipientId)) {
+      return res.status(403).json({ message: 'Chat is only allowed on appointment days' });
     }
+    let mediaType;
+    if (req.file) {
+      if (req.file.mimetype.startsWith('image/')) mediaType = 'image';
+      else if (req.file.mimetype.startsWith('audio/')) mediaType = 'audio';
+      else mediaType = 'file';
+    }
+    const message = new Message({
+      sender: req.user.id,
+      recipient: recipientId,
+      content,
+      mediaUrl: req.file ? req.file.path : undefined,
+      mediaType,
+      fileName: req.file ? req.file.originalname : undefined,
+      replyTo,
+      disappearAfter: disappearAfter ? parseInt(disappearAfter, 10) : 0,
+      clientId,
+      status: 'sent',
+    });
+    await message.save();
+    await message.populate('sender', 'name _id');
+    await message.populate('recipient', 'name _id');
+    await message.populate('replyTo', 'content _id');
+    res.status(201).json(message);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
-    message.content = req.body.content;
+// POST /api/messages/resend/:id - Resend a failed message
+router.post('/resend/:id', authenticate, async (req, res) => {
+  try {
+    const message = await Message.findById(req.params.id);
+    if (!message || message.sender.toString() !== req.user.id || message.status !== 'failed') {
+      return res.status(404).json({ message: 'Message not found, not failed, or unauthorized' });
+    }
+    if (!await canChat(req.user.id, message.recipient.toString())) {
+      return res.status(403).json({ message: 'Chat is only allowed on appointment days' });
+    }
+    message.status = 'sent';
+    await message.save();
+    await message.populate('sender', 'name _id');
+    await message.populate('recipient', 'name _id');
+    await message.populate('replyTo', 'content _id');
+    res.json(message);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// DELETE /api/messages/:id - Soft delete a message
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    const message = await Message.findById(req.params.id);
+    if (!message || message.sender.toString() !== req.user.id) {
+      return res.status(404).json({ message: 'Message not found or unauthorized' });
+    }
+    message.isDeleted = true;
+    await message.save();
+    res.json({ message: 'Message deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// PUT /api/messages/:id - Edit a message
+router.put('/:id', authenticate, async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content) {
+      return res.status(400).json({ message: 'Content is required for edit' });
+    }
+    const message = await Message.findById(req.params.id);
+    if (!message || message.sender.toString() !== req.user.id) {
+      return res.status(404).json({ message: 'Message not found or unauthorized' });
+    }
+    message.content = content;
     message.isEdited = true;
     await message.save();
-
+    await message.populate('sender', 'name _id');
+    await message.populate('recipient', 'name _id');
     res.json(message);
   } catch (err) {
-    console.error('Error editing message:', err);
-    res.status(500).json({ msg: 'Server error' });
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-router.delete('/:messageId', authenticate, authorize(['admin', 'doctor', 'patient']), async (req, res) => {
+// PUT /api/messages/restore/:id - Undo delete (restore message)
+router.put('/restore/:id', authenticate, async (req, res) => {
   try {
-    const message = await Message.findById(req.params.messageId);
-    
-    if (!message) {
-      return res.status(404).json({ msg: 'Message not found' });
+    const message = await Message.findById(req.params.id);
+    if (!message || message.sender.toString() !== req.user.id) {
+      return res.status(404).json({ message: 'Message not found or unauthorized' });
     }
-
-    if (message.sender.toString() !== req.user.id) {
-      return res.status(401).json({ msg: 'Not authorized' });
-    }
-
-    message.isDeleted = true;
-    message.deletedAt = new Date();
-    await message.save();
-
-    res.json({ msg: 'Message deleted' });
-  } catch (err) {
-    console.error('Error deleting message:', err);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-router.put('/restore/:messageId', authenticate, authorize(['admin', 'doctor', 'patient']), async (req, res) => {
-  try {
-    const message = await Message.findById(req.params.messageId);
-
-    if (!message) {
-      return res.status(404).json({ msg: 'Message not found' });
-    }
-
-    if (message.sender.toString() !== req.user.id) {
-      return res.status(401).json({ msg: 'Not authorized' });
-    }
-
     message.isDeleted = false;
-    message.deletedAt = null;
     await message.save();
-
+    await message.populate('sender', 'name _id');
+    await message.populate('recipient', 'name _id');
     res.json(message);
   } catch (err) {
-    console.error('Error restoring message:', err);
-    res.status(500).json({ msg: 'Server error' });
-  }
-});
-
-router.post('/:messageId/retry', authenticate, authorize(['admin', 'doctor', 'patient']), async (req, res) => {
-  try {
-    const message = await Message.findById(req.params.messageId);
-    
-    if (!message) {
-      return res.status(404).json({ msg: 'Message not found' });
-    }
-
-    if (message.sender.toString() !== req.user.id) {
-      return res.status(401).json({ msg: 'Not authorized' });
-    }
-
-    if (message.status !== 'failed') {
-      return res.status(400).json({ msg: 'Message is not in failed state' });
-    }
-
-    message.status = 'sent';
-    message.retryCount += 1;
-    await message.save();
-
-    const populatedMessage = await Message.findById(message._id)
-      .populate('sender', 'name username isOnline')
-      .populate('recipient', 'name username isOnline')
-      .populate('replyTo', 'content mediaUrl');
-
-    res.json(populatedMessage);
-  } catch (err) {
-    console.error('Error retrying message:', err);
-    res.status(500).json({ msg: 'Server error' });
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

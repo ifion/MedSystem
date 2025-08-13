@@ -1,3 +1,4 @@
+// models/User.js
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -9,15 +10,14 @@ const userSchema = new mongoose.Schema({
   phone: { type: String },
   address: { type: String },
   status: { type: String, enum: ['pending', 'active', 'rejected'], default: 'pending' },
-
-  // NEW FIELD: hospital/institution
   hospital: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User', // references an admin user
     required: function () {
-      return this.role !== 'admin'; // only required for doctors & patients
+      return this.role !== 'admin';
     }
-  }
+  },
+  isOnline: { type: Boolean, default: false },
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

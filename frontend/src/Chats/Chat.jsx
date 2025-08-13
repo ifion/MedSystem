@@ -1,4 +1,4 @@
-// Modified Chat.jsx
+// Updated Chat.jsx with required changes for compatibility
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -294,7 +294,7 @@ const Chat = () => {
     socket.current.on('connect', () => console.log('Socket connected'));
     socket.current.on('connect_error', (err) => console.error('Socket connection error:', err));
 
-    socket.current.emit('login', currentUserId);
+    // Removed: socket.current.emit('login', currentUserId); // Handled on server connect
 
     socket.current.on('newMessage', (msg) => {
       const isForCurrentChat = (msg.sender._id === userId && msg.recipient._id === currentUserId);
@@ -394,6 +394,19 @@ const Chat = () => {
       }
     });
 
+    socket.current.on('userStatusChange', ({ userId: statusUserId, isOnline }) => {
+      if (statusUserId === userId) {
+        setRecipient((prev) => (prev ? { ...prev, isOnline } : prev));
+      }
+    });
+
+    socket.current.on('messageError', ({ messageId, error }) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg._id === messageId ? { ...msg, status: 'failed' } : msg))
+      );
+      console.error(error);
+    });
+
     fetchData();
 
     return () => {
@@ -411,6 +424,8 @@ const Chat = () => {
       socket.current.off('receiving_returned_signal');
       socket.current.off('call_ended');
       socket.current.off('user_left');
+      socket.current.off('userStatusChange');
+      socket.current.off('messageError');
       clearInterval(timerRef.current);
       clearTimeout(callTimeoutRef.current);
       endCall();

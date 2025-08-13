@@ -1,3 +1,4 @@
+// middleware/mediaUpload.js
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
@@ -11,8 +12,9 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'identity_cards',
-    allowed_formats: ['jpg', 'png', 'jpeg'],
+    folder: 'chat_media',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'mp3', 'webm', 'pdf', 'doc', 'docx', 'txt'],
+    resource_type: 'auto',
   },
 });
 
