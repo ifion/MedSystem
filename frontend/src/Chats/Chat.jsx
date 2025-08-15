@@ -1,4 +1,3 @@
-// Updated Chat.jsx with required changes for compatibility
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -66,11 +65,16 @@ const OptimizedMessage = memo(({
     clearTimeout(pressTimer.current);
     touchStartX.current = null;
   }, []);
+  const currentUserId = localStorage.getItem('userId');
+  console.log("Sender ID:", message.sender._id, "User ID:", currentUserId, "Match?", message.sender._id === currentUserId);
+console.log(message);
+
+
 
   return (
     <div 
       ref={messageRef}
-      className={`message-wrapper ${message.sender?._id?.toString() === userId ? 'sent' : 'received'}`}
+      className={`message-wrapper ${message.sender._id === currentUserId ? 'sent' : 'received'}`}
       onTouchStart={handlePressStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handlePressEnd}

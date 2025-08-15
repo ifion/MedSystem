@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+// src/pages/Login.jsx  (or wherever your Login component lives)
+import React, { useState, useEffect } from 'react';        // <-- added useEffect
 import { useNavigate, Link } from 'react-router-dom';
-import '../Designs/Login.css'; // New stylesheet
+import '../Designs/Login.css';
 
 function Login() {
   const [username, setUsername] = useState('');
@@ -9,6 +10,11 @@ function Login() {
   const [error, setError] = useState('');
   const navigate = useNavigate();
   const apiUrl = import.meta.env.VITE_API_URL;
+
+  /* 1️⃣  Clear any stale userId when the component mounts */
+  useEffect(() => {
+    localStorage.removeItem('userId');
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,16 +28,25 @@ function Login() {
       const data = await response.json();
 
       if (response.ok) {
-        const { token, role, userId } = data;
+        const { token, role, userId } = data;   // userId is returned by /login
         localStorage.setItem('token', token);
         localStorage.setItem('role', role);
-        localStorage.setItem('doctorId', userId);
-        alert('Login successful!');
+        localStorage.setItem('userId', userId); // 2️⃣  Store the real user id
 
-        if (role === 'admin') navigate('/admindashboard');
-        else if (role === 'doctor') navigate('/doctor/dashboard');
-        else if (role === 'patient') navigate('/patient/dashboard');
-        else navigate('/dashboard');
+        alert('Login successful!');
+        switch (role) {
+          case 'admin':
+            navigate('/admindashboard');
+            break;
+          case 'doctor':
+            navigate('/doctor/dashboard');
+            break;
+          case 'patient':
+            navigate('/patient/dashboard');
+            break;
+          default:
+            navigate('/dashboard');
+        }
       } else {
         setError(data.message || 'Login failed.');
       }
@@ -48,7 +63,6 @@ function Login() {
         {error && <p className="error-message">{error}</p>}
 
         <form onSubmit={handleSubmit}>
-          {/* Username */}
           <div className="form-group">
             <label>Username:</label>
             <input
@@ -59,7 +73,6 @@ function Login() {
             />
           </div>
 
-          {/* Password with toggle */}
           <div className="form-group">
             <label>Password:</label>
             <div className="password-wrapper">
@@ -79,13 +92,16 @@ function Login() {
             </div>
           </div>
 
-          {/* Submit */}
-          <button type="submit" className="btn-primary1">Login</button>
+          <button type="submit" className="btn-primary1">
+            Login
+          </button>
         </form>
 
         <p className="login-footer">
           Don&apos;t have an account?{' '}
-          <Link to="/roleselect" className="link-primary">Register</Link>
+          <Link to="/roleselect" className="link-primary">
+            Register
+          </Link>
         </p>
       </div>
     </div>
