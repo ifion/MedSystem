@@ -204,6 +204,7 @@ const Chat = () => {
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
   const [activeVideo, setActiveVideo] = useState('remote');
   const [peers, setPeers] = useState([]);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -468,7 +469,7 @@ const Chat = () => {
   const createPeer = (userToSignal, callerId, stream) => {
     const peer = new Peer({
       initiator: true,
-      trickle: true,
+      trickle: false,
       config: configuration,
       stream,
     });
@@ -489,7 +490,7 @@ const Chat = () => {
   const addPeer = (incomingSignal, callerId, stream) => {
     const peer = new Peer({
       initiator: false,
-      trickle: true,
+      trickle: false,
       config: configuration,
       stream,
     });
@@ -950,64 +951,50 @@ const Chat = () => {
           </div>
         )}
 
-        <div className="input-group">
-          <button className="icon-button attach-button" onClick={() => fileInputRef.current.click()} aria-label="Attach file">
-            <svg className="attachment-icon" viewBox="0 0 24 24">
-              <path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .55-.45 1-1 1s-1-.45-1-1H10v9.5a2.5 2.5 0 005 0V5c0-2.21-1.79-4-4-4S7 2.79 7 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" />
-            </svg>
-          </button>
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          className="hidden-file-input"
+          accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
+        />
 
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileSelect}
-            className="hidden-file-input"
-            accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
-          />
-
-          <AutoResizeTextarea
-            value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
-              handleTyping();
-            }}
-            placeholder={replyTo ? "Type your reply..." : "Type a message..."}
-            className="message-input"
-            aria-label={replyTo ? "Type your reply" : "Type a message"}
-          />
-
-          <button
-            className="send-button"
-            onClick={sendMessage}
-            disabled={!inputText && !file}
-            aria-label="Send message"
-          >
-            <svg className="send-icon" viewBox="0 0 24 24">
-              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-            </svg>
-          </button>
-
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            className={`record-button ${isRecording ? 'recording' : ''}`}
-            aria-label={isRecording ? "Stop recording" : "Record voice note"}
-          >
-            {isRecording ? '⏹' : '🎙'}
-            {isRecording && (
-              <span className="recording-indicator">
-                Recording... {formatTime(recordingTime)}
-              </span>
-            )}
-          </button>
-
-          <button 
-            className="disappear-button"
-            onClick={openDisappearModal}
-            aria-label="Set disappear timer"
-          >
-            {disappearTime > 0 ? `Timer: ${disappearTime / 3600} hr` : '⌚'}
-          </button>
-        </div>
+        {isRecording ? (
+          <div className="recording-bar">
+            <span>Recording... {formatTime(recordingTime)}</span>
+            <button onClick={stopRecording}>⏹ Stop</button>
+          </div>
+        ) : (
+          <div className="input-group">
+            <button 
+              className="more-button"
+              onClick={() => setShowOptionsModal(true)}
+              aria-label="More options"
+            >
+              +
+            </button>
+            <AutoResizeTextarea
+              value={inputText}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                handleTyping();
+              }}
+              placeholder={replyTo ? "Type your reply..." : "Type a message..."}
+              className="message-input"
+              aria-label={replyTo ? "Type your reply" : "Type a message"}
+            />
+            <button
+              className="send-button"
+              onClick={sendMessage}
+              disabled={!inputText && !file}
+              aria-label="Send message"
+            >
+              <svg className="send-icon" viewBox="0 0 24 24">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              </svg>
+            </button>
+          </div>
+        )}
 
         {file && (
           <div className="selected-file">
@@ -1127,6 +1114,37 @@ const Chat = () => {
               ))}
             </ul>
             <button className="cancel-button" onClick={closeDisappearModal}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {showOptionsModal && (
+        <div className="popup-backdrop" onClick={() => setShowOptionsModal(false)}>
+          <div className="options-modal" onClick={(e) => e.stopPropagation()}>
+            <button 
+              onClick={() => {
+                fileInputRef.current.click();
+                setShowOptionsModal(false);
+              }}
+            >
+              Attach File
+            </button>
+            <button 
+              onClick={() => {
+                startRecording();
+                setShowOptionsModal(false);
+              }}
+            >
+              Record Voice
+            </button>
+            <button 
+              onClick={() => {
+                openDisappearModal();
+                setShowOptionsModal(false);
+              }}
+            >
+              Set Disappear Timer
+            </button>
           </div>
         </div>
       )}
