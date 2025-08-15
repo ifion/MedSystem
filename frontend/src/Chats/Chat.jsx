@@ -213,10 +213,16 @@ const Chat = () => {
   const mediaRecorder = useRef(null);
   const timerRef = useRef(null);
   const callTimeoutRef = useRef(null);
+  const ringtoneRef = useRef(null);
 
   const configuration = {
     iceServers: [
-      { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' },
+      { urls: 'stun:global.stun.twilio.com:3478' },
     ],
     iceCandidatePoolSize: 10,
   };
@@ -245,6 +251,27 @@ const Chat = () => {
       audio.preload = 'auto';
     }
   };
+
+  useEffect(() => {
+    const audio = new Audio('https://www.soundjay.com/phone/telephone-ring-3.mp3'); // Public ringtone URL, replace if needed
+    audio.loop = true;
+    ringtoneRef.current = audio;
+    return () => {
+      audio.pause();
+      audio.src = '';
+    };
+  }, []);
+
+  useEffect(() => {
+    if (ringtoneRef.current) {
+      if (incomingCall) {
+        ringtoneRef.current.play().catch((e) => console.log('Ringtone play blocked:', e));
+      } else {
+        ringtoneRef.current.pause();
+        ringtoneRef.current.currentTime = 0;
+      }
+    }
+  }, [incomingCall]);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -441,7 +468,7 @@ const Chat = () => {
   const createPeer = (userToSignal, callerId, stream) => {
     const peer = new Peer({
       initiator: true,
-      trickle: false,
+      trickle: true,
       config: configuration,
       stream,
     });
@@ -454,13 +481,15 @@ const Chat = () => {
       setRemoteStream(remoteStream);
     });
 
+    peer.on('error', (err) => console.error('Peer error:', err));
+
     return peer;
   };
 
   const addPeer = (incomingSignal, callerId, stream) => {
     const peer = new Peer({
       initiator: false,
-      trickle: false,
+      trickle: true,
       config: configuration,
       stream,
     });
@@ -472,6 +501,8 @@ const Chat = () => {
     peer.on('stream', (remoteStream) => {
       setRemoteStream(remoteStream);
     });
+
+    peer.on('error', (err) => console.error('Peer error:', err));
 
     peer.signal(incomingSignal);
     return peer;
