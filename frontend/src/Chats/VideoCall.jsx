@@ -1,3 +1,4 @@
+// VideoCall.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -27,7 +28,11 @@ const VideoCall = () => {
   const peersRef = useRef([]);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+
+  // FIX: keep the timer in a ref so we can clear it on unmount
   const callTimeoutRef = useRef(null);
+  // FIX: flag that guarantees we run the call logic only once
+  const initDoneRef = useRef(false);
 
   const configuration = {
     iceServers: [
@@ -54,7 +59,7 @@ const VideoCall = () => {
   };
 
   const cleanUpCall = useCallback(() => {
-    clearTimeout(callTimeoutRef.current);
+    if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
     peersRef.current.forEach(({ peer }) => peer.destroy());
     if (localStream) {
       localStream.getTracks().forEach((track) => track.stop());
@@ -65,6 +70,7 @@ const VideoCall = () => {
       } else if (inCall) {
         socket.current.emit('end_call', callRoomId);
       }
+      socket.current.disconnect();
     }
     setInCall(false);
     setIsCalling(false);
@@ -76,9 +82,13 @@ const VideoCall = () => {
   }, [isCalling, inCall, callRoomId, recipientId]);
 
   useEffect(() => {
+    // FIX: prevent double initialisation in strict-mode
+    if (initDoneRef.current) return;
+    initDoneRef.current = true;
+
     socket.current = io(apiUrl, {
       query: { userId: currentUserId, recipientId },
-      transports: ['websocket']
+      transports: ['websocket'],
     });
 
     socket.current.on('connect', () => console.log('Video socket connected'));
@@ -147,21 +157,12 @@ const VideoCall = () => {
       acceptVideoCall();
     }
 
+    // FIX: clean everything on unmount
     return () => {
-      if (socket.current) {
-        socket.current.off('video_call_accepted');
-        socket.current.off('video_call_rejected');
-        socket.current.off('video_call_canceled');
-        socket.current.off('all_users');
-        socket.current.off('user_joined');
-        socket.current.off('receiving_returned_signal');
-        socket.current.off('call_ended');
-        socket.current.off('user_left');
-        socket.current.disconnect();
-      }
       cleanUpCall();
     };
-  }, [type, queryRoomId, cleanUpCall]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once
 
   useEffect(() => {
     if (localStream && localVideoRef.current) {
@@ -270,7 +271,7 @@ const VideoCall = () => {
   };
 
   const switchCamera = () => {
-    setActiveVideo(prev => prev === 'remote' ? 'local' : 'remote');
+    setActiveVideo((prev) => (prev === 'remote' ? 'local' : 'remote'));
   };
 
   const endCall = () => {
@@ -300,15 +301,25 @@ const VideoCall = () => {
             autoPlay
             playsInline
             muted
-            className={(isCalling || inCall) ? (inCall && activeVideo === 'local' ? 'maximized' : 'minimized') : 'hidden'}
+            className={
+              isCalling || inCall
+                ? inCall && activeVideo === 'local'
+                  ? 'maximized'
+                  : 'minimized'
+                : 'hidden'
+            }
             onClick={switchCamera}
           />
         </div>
       )}
       {inCall && (
         <div className="call-controls">
-          <button onClick={toggleAudioMute}>{isAudioMuted ? 'Unmute' : 'Mute'}</button>
-          <button onClick={toggleVideo}>{isVideoEnabled ? 'Video Off' : 'Video On'}</button>
+          <button onClick={toggleAudioMute}>
+            {isAudioMuted ? 'Unmute' : 'Mute'}
+          </button>
+          <button onClick={toggleVideo}>
+            {isVideoEnabled ? 'Video Off' : 'Video On'}
+          </button>
           <button onClick={endCall}>End Call</button>
         </div>
       )}
