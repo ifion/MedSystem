@@ -12,6 +12,7 @@ import DoctorDashboard from './Dashboard/DoctorDashboard';
 import PatientDashboard from './Dashboard/PatientDashboard';
 import DiagnosisPrescriptionForm from './Forms/DiagnosisPrescriptionForm';
 import Chat from './Chats/Chat';
+import VideoCall from './Chats/VideoCall'; 
 import './App.css';
 
 
@@ -31,6 +32,7 @@ function App() {
         <Route path= "/patient/profile" element={<PatientProfile />} />
         <Route path="/chat/:userId" element={<Chat />} />
         <Route path="/diagnosis-prescription/:patientId" element={<DiagnosisPrescriptionForm />} />
+        <Route path="/video-call/:userId" element={<VideoCall />} />
       </Routes>
     </Router>
   );
