@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import Peer from 'simple-peer';
@@ -52,6 +52,28 @@ const VideoCall = () => {
     ],
     iceCandidatePoolSize: 10,
   };
+
+  const cleanUpCall = useCallback(() => {
+    clearTimeout(callTimeoutRef.current);
+    peersRef.current.forEach(({ peer }) => peer.destroy());
+    if (localStream) {
+      localStream.getTracks().forEach((track) => track.stop());
+    }
+    if (socket.current) {
+      if (isCalling) {
+        socket.current.emit('video_call_cancel', { recipientId });
+      } else if (inCall) {
+        socket.current.emit('end_call', callRoomId);
+      }
+    }
+    setInCall(false);
+    setIsCalling(false);
+    setLocalStream(null);
+    setRemoteStream(null);
+    setCallRoomId(null);
+    setPeers([]);
+    peersRef.current = [];
+  }, [isCalling, inCall, callRoomId, recipientId]);
 
   useEffect(() => {
     socket.current = io(apiUrl, {
@@ -126,19 +148,20 @@ const VideoCall = () => {
     }
 
     return () => {
-      socket.current.off('video_call_accepted');
-      socket.current.off('video_call_rejected');
-      socket.current.off('video_call_canceled');
-      socket.current.off('all_users');
-      socket.current.off('user_joined');
-      socket.current.off('receiving_returned_signal');
-      socket.current.off('call_ended');
-      socket.current.off('user_left');
-      socket.current.disconnect();
-      clearTimeout(callTimeoutRef.current);
-      endCall();
+      if (socket.current) {
+        socket.current.off('video_call_accepted');
+        socket.current.off('video_call_rejected');
+        socket.current.off('video_call_canceled');
+        socket.current.off('all_users');
+        socket.current.off('user_joined');
+        socket.current.off('receiving_returned_signal');
+        socket.current.off('call_ended');
+        socket.current.off('user_left');
+        socket.current.disconnect();
+      }
+      cleanUpCall();
     };
-  }, [type, queryRoomId]);
+  }, [type, queryRoomId, cleanUpCall]);
 
   useEffect(() => {
     if (localStream && localVideoRef.current) {
@@ -251,23 +274,7 @@ const VideoCall = () => {
   };
 
   const endCall = () => {
-    clearTimeout(callTimeoutRef.current);
-    peersRef.current.forEach(({ peer }) => peer.destroy());
-    if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
-    }
-    if (isCalling) {
-      socket.current.emit('video_call_cancel', { recipientId });
-    } else if (inCall) {
-      socket.current.emit('end_call', callRoomId);
-    }
-    setInCall(false);
-    setIsCalling(false);
-    setLocalStream(null);
-    setRemoteStream(null);
-    setCallRoomId(null);
-    setPeers([]);
-    peersRef.current = [];
+    cleanUpCall();
     navigate(-1);
   };
 
