@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import Draggable from "react-draggable";
+import { DndContext } from "@dnd-kit/core"; // New
+import { useDraggable } from "@dnd-kit/core"; // New
+import { restrictToParentElement } from "@dnd-kit/modifiers"; // New
 import ReactCrop from "react-image-crop";
 import { v4 as uuidv4 } from "uuid";
 import useUndo from "use-undo";
@@ -384,6 +386,61 @@ const ImageEditor = ({ imageSrc, onSave, onCancel, maxWidth = 900, maxHeight = 7
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedId, layers, canvasDims.width, canvasDims.height]);
 
+  // New: Custom draggable component for each text layer
+  const DraggableTextLayer = ({ layer }) => {
+    const { attributes, listeners, setNodeRef, transform } = useDraggable({
+      id: layer.id,
+      disabled: layer.locked,
+    });
+
+    const style = {
+      position: "absolute",
+      transform: `translate(${layer.x}px, ${layer.y}px)${transform ? ` translate(${transform.x}px, ${transform.y}px)` : ""}`,
+      zIndex: layer.z,
+      cursor: layer.locked ? "not-allowed" : "move",
+      pointerEvents: layer.locked ? "none" : "all",
+      userSelect: "none",
+    };
+
+    return (
+      <div
+        ref={setNodeRef}
+        {...listeners}
+        {...attributes}
+        className={`layer-drag-overlay${selectedId === layer.id ? " selected" : ""}`}
+        style={style}
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedId(layer.id);
+        }}
+      >
+        <div
+          className="text-layer"
+          style={{
+            color: layer.color,
+            fontSize: layer.fontSize,
+            fontFamily: layer.fontFamily,
+            fontWeight: layer.bold ? "bold" : "normal",
+            fontStyle: layer.italic ? "italic" : "normal",
+            textDecoration: layer.underline ? "underline" : "none",
+            textAlign: layer.align,
+            filter: layer.shadow ? "drop-shadow(0 2px 4px #0006)" : "none",
+            textShadow: layer.shadow ? "1px 1px 6px #000a" : "none",
+            background: "none",
+            cursor: layer.locked ? "not-allowed" : "move",
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            padding: "4px",
+            transform: `rotate(${layer.rotation}deg) translate(${layer.align === "center" ? "-50%" : layer.align === "right" ? "-100%" : "0"}, 0)`,
+          }}
+        >
+          {layer.content}
+        </div>
+      </div>
+    );
+  };
+
   // --- Render ---
   return (
     <div className={`img-editor-root ${theme}`}>
@@ -434,72 +491,41 @@ const ImageEditor = ({ imageSrc, onSave, onCancel, maxWidth = 900, maxHeight = 7
               </ReactCrop>
             </div>
           ) : (
-            <div className="canvas-wrap" style={{ position: "relative", width: "100%", height: "100%" }}>
-              <canvas
-                ref={canvasRef}
-                className="editor-canvas"
-                style={{ width: "100%", maxWidth: "100vw", maxHeight: "70vh" }}
-                tabIndex={0}
-              />
-              {layers
-                .filter((layer) => layer.type !== "shape")
-                .map((layer) => (
-                  <Draggable
-                    key={layer.id}
-                    disabled={layer.locked}
-                    bounds={{ left: 0, top: 0, right: canvasDims.width, bottom: canvasDims.height }}
-                    position={{ x: layer.x, y: layer.y }}
-                    onStart={() => setSelectedId(layer.id)}
-                    onDrag={(_, data) =>
-                      updateLayer(layer.id, {
-                        x: clamp(data.x, 0, canvasDims.width),
-                        y: clamp(data.y, 0, canvasDims.height)
-                      })
-                    }
-                  >
-                    <div
-                      className={`layer-drag-overlay${selectedId === layer.id ? " selected" : ""}`}
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        top: 0,
-                        zIndex: layer.z,
-                        cursor: layer.locked ? "not-allowed" : "move",
-                        pointerEvents: layer.locked ? "none" : "all",
-                        userSelect: "none"
-                      }}
-                      tabIndex={0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedId(layer.id);
-                      }}
-                    >
-                      <div
-                        className="text-layer"
-                        style={{
-                          color: layer.color,
-                          fontSize: layer.fontSize,
-                          fontFamily: layer.fontFamily,
-                          fontWeight: layer.bold ? "bold" : "normal",
-                          fontStyle: layer.italic ? "italic" : "normal",
-                          textDecoration: layer.underline ? "underline" : "none",
-                          textAlign: layer.align,
-                          filter: layer.shadow ? "drop-shadow(0 2px 4px #0006)" : "none",
-                          textShadow: layer.shadow ? "1px 1px 6px #000a" : "none",
-                          background: "none",
-                          cursor: layer.locked ? "not-allowed" : "move",
-                          pointerEvents: "none",
-                          whiteSpace: "nowrap",
-                          padding: "4px",
-                          transform: `rotate(${layer.rotation}deg) translate(${layer.align === "center" ? "-50%" : layer.align === "right" ? "-100%" : "0"}, 0)`
-                        }}
-                      >
-                        {layer.content}
-                      </div>
-                    </div>
-                  </Draggable>
-                ))}
-            </div>
+            <DndContext
+              onDragStart={({ active }) => setSelectedId(active.id)}
+              onDragEnd={({ active, delta }) => {
+                const currentLayer = layers.find((l) => l.id === active.id);
+                if (currentLayer) {
+                  updateLayer(active.id, {
+                    x: clamp(currentLayer.x + delta.x, 0, canvasDims.width),
+                    y: clamp(currentLayer.y + delta.y, 0, canvasDims.height),
+                  });
+                }
+              }}
+              modifiers={[restrictToParentElement]}
+            >
+              <div
+                className="canvas-wrap"
+                style={{
+                  position: "relative",
+                  width: `${canvasDims.width}px`,
+                  height: `${canvasDims.height}px`,
+                  margin: "auto",
+                }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  className="editor-canvas"
+                  style={{ width: "100%", height: "100%" }}
+                  tabIndex={0}
+                />
+                {layers
+                  .filter((layer) => layer.type !== "shape")
+                  .map((layer) => (
+                    <DraggableTextLayer key={layer.id} layer={layer} />
+                  ))}
+              </div>
+            </DndContext>
           )}
         </div>
         {isModalOpen && (
