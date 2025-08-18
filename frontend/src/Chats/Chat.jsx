@@ -5,8 +5,6 @@ import io from 'socket.io-client';
 import { v4 as uuidv4 } from 'uuid';
 import AutoResizeTextarea from './AutoResizeTextArea';
 import ImageEditor from './ImageEditor';
-import Peer from 'simple-peer';
-import VideoCall from './VideoCall';
 import '../Designs/Chat.css';
 
 const OptimizedMessage = memo(({
@@ -193,17 +191,11 @@ const Chat = () => {
   const [recordingTime, setRecordingTime] = useState(0);
   const [canChat, setCanChat] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showVideoCall, setShowVideoCall] = useState(false);
   const [incomingCall, setIncomingCall] = useState(false);
   const [caller, setCaller] = useState(null);
-  const [isCalling, setIsCalling] = useState(false);
-  const [inCall, setInCall] = useState(false);
   const [callRoomId, setCallRoomId] = useState(null);
-  const [localStream, setLocalStream] = useState(null);
-  const [remoteStream, setRemoteStream] = useState(null);
-  const [isAudioMuted, setIsAudioMuted] = useState(false);
-  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [activeVideo, setActiveVideo] = useState('remote');
-  const [peers, setPeers] = useState([]);
+  const [isCalling, setIsCalling] = useState(false);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -212,31 +204,6 @@ const Chat = () => {
   const fileInputRef = useRef(null);
   const mediaRecorder = useRef(null);
   const timerRef = useRef(null);
-  const callTimeoutRef = useRef(null);
-
-  const configuration = {
-    iceServers: [
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:openrelay.metered.ca:80' },
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayprojectsecret',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayprojectsecret',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayprojectsecret',
-      },
-    ],
-    iceCandidatePoolSize: 10,
-  };
 
   const groupMessagesByDate = (msgs) => {
     const grouped = [];
@@ -260,6 +227,26 @@ const Chat = () => {
       const audio = new Audio();
       audio.src = url;
       audio.preload = 'auto';
+    }
+  };
+
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (el) {
+      el.addEventListener('scroll', handleScroll);
+    }
+    return () => {
+      if (el) {
+        el.removeEventListener('scroll', handleScroll);
+      }
+    };
+  }, []);
+
+  const handleScroll = () => {
+    const el = messagesContainerRef.current;
+    if (el) {
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 10;
+      setIsAtBottom(atBottom);
     }
   };
 
@@ -314,16 +301,17 @@ const Chat = () => {
     socket.current.on('connect', () => console.log('Socket connected'));
     socket.current.on('connect_error', (err) => console.error('Socket connection error:', err));
 
-    // Removed: socket.current.emit('login', currentUserId); // Handled on server connect
-
     socket.current.on('newMessage', (msg) => {
       const isForCurrentChat = (msg.sender._id === userId && msg.recipient._id === currentUserId);
       if (isForCurrentChat) {
+        const wasAtBottom = isAtBottom;
         setMessages((prev) => {
           if (prev.some(m => m._id === msg._id || m.clientId === msg.clientId)) return prev;
           return [...prev, msg];
         });
-        scrollToBottom();
+        if (wasAtBottom) {
+          scrollToBottom();
+        }
         if (msg.recipient._id === currentUserId) {
           socket.current.emit('messageDelivered', { messageId: msg._id });
           if (document.hasFocus()) {
@@ -349,69 +337,25 @@ const Chat = () => {
     socket.current.on('userTyping', () => setIsTyping(true));
     socket.current.on('userStoppedTyping', () => setIsTyping(false));
 
-    // Video call events
     socket.current.on('incoming_video_call', ({ callerId, roomId }) => {
       if (callerId === userId) {
         setIncomingCall(true);
         setCaller(callerId);
         setCallRoomId(roomId);
+        setShowVideoCall(true);
       }
-    });
-
-    socket.current.on('video_call_accepted', ({ roomId }) => {
-      clearTimeout(callTimeoutRef.current);
-      setIsCalling(false);
-      setInCall(true);
-      joinVideoRoom(roomId);
     });
 
     socket.current.on('video_call_rejected', () => {
-      clearTimeout(callTimeoutRef.current);
       alert('Call rejected by the other user.');
-      endCall();
+      setIsCalling(false);
+      setShowVideoCall(false);
     });
 
     socket.current.on('video_call_canceled', () => {
-      setIncomingCall(false);
       alert('Call was canceled by the caller.');
-    });
-
-    socket.current.on('all_users', (users) => {
-      const newPeers = [];
-      users.forEach((userId) => {
-        const peer = createPeer(userId, socket.current.id, localStream);
-        peersRef.current.push({ peerId: userId, peer });
-        newPeers.push(peer);
-      });
-      setPeers(newPeers);
-    });
-
-    socket.current.on('user_joined', (payload) => {
-      const peer = addPeer(payload.signal, payload.callerId, localStream);
-      peersRef.current.push({ peerId: payload.callerId, peer });
-      setPeers((prevPeers) => [...prevPeers, peer]);
-    });
-
-    socket.current.on('receiving_returned_signal', (payload) => {
-      const item = peersRef.current.find((p) => p.peerId === payload.id);
-      if (item) {
-        item.peer.signal(payload.signal);
-      }
-    });
-
-    socket.current.on('call_ended', () => {
-      endCall();
-    });
-
-    socket.current.on('user_left', (id) => {
-      const peerObj = peersRef.current.find((p) => p.peerId === id);
-      if (peerObj) {
-        peerObj.peer.destroy();
-      }
-      setPeers((prevPeers) => prevPeers.filter((p) => p.peerId !== id));
-      if (peersRef.current.length === 0) {
-        endCall();
-      }
+      setIncomingCall(false);
+      setShowVideoCall(false);
     });
 
     socket.current.on('userStatusChange', ({ userId: statusUserId, isOnline }) => {
@@ -436,149 +380,26 @@ const Chat = () => {
       socket.current.off('userTyping');
       socket.current.off('userStoppedTyping');
       socket.current.off('incoming_video_call');
-      socket.current.off('video_call_accepted');
       socket.current.off('video_call_rejected');
       socket.current.off('video_call_canceled');
-      socket.current.off('all_users');
-      socket.current.off('user_joined');
-      socket.current.off('receiving_returned_signal');
-      socket.current.off('call_ended');
-      socket.current.off('user_left');
       socket.current.off('userStatusChange');
       socket.current.off('messageError');
       socket.current.disconnect();
       clearInterval(timerRef.current);
-      clearTimeout(callTimeoutRef.current);
-      endCall();
     };
   }, [userId, apiUrl]);
 
-  const peersRef = useRef([]);
-
-  const createPeer = (userToSignal, callerId, stream) => {
-    const peer = new Peer({
-      initiator: true,
-      trickle: false,
-      config: configuration,
-      stream,
-    });
-
-    peer.on('signal', (signal) => {
-      socket.current.emit('sending_signal', { userToSignal, callerId, signal });
-    });
-
-    peer.on('stream', (remoteStream) => {
-      setRemoteStream(remoteStream);
-    });
-
-    return peer;
+  const handleStartVideoCall = () => {
+    setIsCalling(true);
+    setShowVideoCall(true);
   };
 
-  const addPeer = (incomingSignal, callerId, stream) => {
-    const peer = new Peer({
-      initiator: false,
-      trickle: false,
-      config: configuration,
-      stream,
-    });
-
-    peer.on('signal', (signal) => {
-      socket.current.emit('returning_signal', { signal, callerId });
-    });
-
-    peer.on('stream', (remoteStream) => {
-      setRemoteStream(remoteStream);
-    });
-
-    peer.signal(incomingSignal);
-    return peer;
-  };
-
-  const startVideoCall = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
-      const roomId = [localStorage.getItem('userId'), userId].sort().join('_');
-      setCallRoomId(roomId);
-      setIsCalling(true);
-      socket.current.emit('video_call_request', { callerId: localStorage.getItem('userId'), recipientId: userId });
-      callTimeoutRef.current = setTimeout(() => {
-        if (isCalling) {
-          endCall();
-          setError('Call timed out. No answer.');
-        }
-      }, 20000);
-    } catch (err) {
-      console.error('Error accessing media devices:', err);
-      setError('Failed to access camera/microphone.');
-    }
-  };
-
-  const acceptVideoCall = async () => {
+  const handleCloseVideoCall = () => {
+    setShowVideoCall(false);
     setIncomingCall(false);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
-      setInCall(true);
-      socket.current.emit('video_call_accept', { callerId: caller, recipientId: localStorage.getItem('userId'), roomId: callRoomId });
-      joinVideoRoom(callRoomId);
-    } catch (err) {
-      console.error('Error accessing media devices:', err);
-      setError('Failed to access camera/microphone.');
-    }
-  };
-
-  const rejectVideoCall = () => {
-    setIncomingCall(false);
-    socket.current.emit('video_call_reject', { callerId: caller });
-  };
-
-  const joinVideoRoom = (roomId) => {
-    socket.current.emit('join_video_room', roomId);
-  };
-
-  const toggleAudioMute = () => {
-    if (localStream) {
-      localStream.getAudioTracks().forEach((track) => {
-        track.enabled = !track.enabled;
-      });
-      setIsAudioMuted(!isAudioMuted);
-    }
-  };
-
-  const toggleVideo = () => {
-    if (localStream) {
-      localStream.getVideoTracks().forEach((track) => {
-        track.enabled = !track.enabled;
-      });
-      setIsVideoEnabled(!isVideoEnabled);
-    }
-  };
-
-  const endCall = () => {
-    clearTimeout(callTimeoutRef.current);
-    peersRef.current.forEach(({ peer }) => peer.destroy());
-    if (localStream) {
-      localStream.getTracks().forEach((track) => track.stop());
-    }
-    if (isCalling) {
-      socket.current.emit('video_call_cancel', { recipientId: userId });
-    } else if (inCall) {
-      socket.current.emit('end_call', callRoomId);
-    }
-    setInCall(false);
     setIsCalling(false);
-    setIncomingCall(false);
-    setLocalStream(null);
-    setRemoteStream(null);
-    setCallRoomId(null);
-    setPeers([]);
     setCaller(null);
-    peersRef.current = [];
-  };
-
-  const switchCamera = () => {
-    setActiveVideo(prev => prev === 'remote' ? 'local' : 'remote');
+    setCallRoomId(null);
   };
 
   const handleFileSelect = (event) => {
@@ -688,6 +509,7 @@ const Chat = () => {
       disappearAfter: disappearTime,
     };
 
+    const wasAtBottom = isAtBottom;
     setMessages((prev) => [...prev, newMsg]);
     setInputText('');
     setFile(null);
@@ -695,6 +517,9 @@ const Chat = () => {
     setDisappearTime(0);
     setError(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (wasAtBottom) {
+      scrollToBottom();
+    }
 
     try {
       const formData = new FormData();
@@ -720,8 +545,7 @@ const Chat = () => {
       );
       setError('Failed to send message. Please try again.');
     }
-    scrollToBottom();
-  }, [inputText, file, recipient, replyTo, disappearTime, userId, apiUrl]);
+  }, [inputText, file, recipient, replyTo, disappearTime, userId, apiUrl, isAtBottom]);
 
   const handleTyping = useCallback(() => {
     socket.current.emit('typing', {
@@ -842,7 +666,7 @@ const Chat = () => {
               <div className={`status-dot ${recipient.isOnline ? 'online' : 'offline'}`} />
               <span>{recipient.isOnline ? 'Online' : 'Offline'}</span>
             </div>
-            <button onClick={startVideoCall} className="video-call-button" aria-label="Start Video Call">
+            <button onClick={handleStartVideoCall} className="video-call-button" aria-label="Start Video Call">
               📹
             </button>
             {userRole === 'doctor' && (
@@ -907,22 +731,15 @@ const Chat = () => {
         <div ref={messagesEndRef} />
       </main>
 
-      {(inCall || isCalling || incomingCall) && (
+      {showVideoCall && (
         <VideoCall
-          localStream={localStream}
-          remoteStream={remoteStream}
-          isCalling={isCalling}
+          socket={socket.current}
+          recipientId={userId}
           incomingCall={incomingCall}
-          inCall={inCall}
-          isAudioMuted={isAudioMuted}
-          isVideoEnabled={isVideoEnabled}
-          activeVideo={activeVideo}
-          onAccept={acceptVideoCall}
-          onReject={rejectVideoCall}
-          onEnd={endCall}
-          onToggleAudio={toggleAudioMute}
-          onToggleVideo={toggleVideo}
-          onSwitchCamera={switchCamera}
+          caller={caller}
+          callRoomId={callRoomId}
+          isCalling={isCalling}
+          onClose={handleCloseVideoCall}
         />
       )}
 
