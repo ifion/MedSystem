@@ -191,15 +191,24 @@ io.on('connection', async (socket) => {
   });
 
   // 2) Recipient accepts; notify the exact caller socket by id.
-  socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
-    console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
-    io.to(callerSocketId).emit('video_call_accepted', { roomId });
+  socket.on('video_call_accept', ({ calleeId, roomId }) => {
+    const [id1, id2] = roomId.split('_');
+    const callerId = calleeId === id1 ? id2 : id1;
+    const callerSockets = connectedUsers.get(callerId) || [];
+    console.log(`[CALL] accept room=${roomId} callee=${calleeId} notify caller=${callerId}`);
+    for (const sid of callerSockets) {
+      io.to(sid).emit('video_call_accepted', { roomId });
+    }
   });
 
   // 3) Recipient rejects; notify exact caller socket by id.
-  socket.on('video_call_reject', ({ callerSocketId }) => {
-    console.log(`[CALL] reject notify callerSocketId=${callerSocketId}`);
-    io.to(callerSocketId).emit('video_call_rejected');
+  socket.on('video_call_reject', ({ callerId }) => {
+    const cid = String(callerId);
+    const callerSockets = connectedUsers.get(cid) || [];
+    console.log(`[CALL] reject notify caller=${cid}`);
+    for (const sid of callerSockets) {
+      io.to(sid).emit('video_call_rejected');
+    }
   });
 
   // 4) Caller cancels before pickup; notify all recipient sockets.

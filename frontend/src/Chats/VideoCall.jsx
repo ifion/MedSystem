@@ -4,6 +4,8 @@ import io from 'socket.io-client';
 import Peer from 'simple-peer';
 import '../Designs/VideoCall.css';
 
+const RING_TIMEOUT_MS = 60_000; // 60 seconds
+
 const VideoCall = () => {
   const { userId: recipientId } = useParams();
   const [searchParams] = useSearchParams();
@@ -14,33 +16,27 @@ const VideoCall = () => {
   const navigate = useNavigate();
 
   const [localStream, setLocalStream] = useState(null);
-  // removed remoteStream state to avoid re-renders/flicker
-  const [isCalling, setIsCalling] = useState(false);
+  const [isCalling, setIsCalling] = useState(false); // caller-side: initiating
   const [inCall, setInCall] = useState(false);
   const [callRoomId, setCallRoomId] = useState(null);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [activeVideo, setActiveVideo] = useState('remote');
   const [peers, setPeers] = useState([]);
   const [error, setError] = useState(null);
+  const [callDuration, setCallDuration] = useState(0);
 
-  // call duration timer
-  const [callDuration, setCallDuration] = useState(0); // seconds
-
-  // singletons / refs
+  // refs and singletons
   const socket = useRef(null);
-  const peersRef = useRef([]); // { peerId, peer }
+  const peersRef = useRef([]); // array of { peerId, peer }
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const callTimeoutRef = useRef(null);
+  const localStreamRef = useRef(null);
   const mounted = useRef(false);
 
-  // keep latest local stream in a ref to avoid stale closures
-  const localStreamRef = useRef(null);
-
-  // timer refs
-  const callStartRef = useRef(null);
+  // timers
+  const callTimeoutRef = useRef(null);
   const callTimerInterval = useRef(null);
+  const callStartRef = useRef(null);
 
   const configuration = {
     iceServers: [
@@ -66,7 +62,6 @@ const VideoCall = () => {
     iceCandidatePoolSize: 10,
   };
 
-  // helper: format duration seconds to MM:SS
   const formatDuration = (seconds) => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
@@ -75,96 +70,63 @@ const VideoCall = () => {
     return `${mm}:${ss}`;
   };
 
-  // Attach remote stream directly to remote video element to avoid React re-rendering
+  const safeEmit = (event, payload) => {
+    try {
+      if (socket.current && socket.current.connected) {
+        socket.current.emit(event, payload);
+      }
+    } catch (e) {
+      console.warn('Emit failed', event, e);
+    }
+  };
+
+  // ensure remote stream is attached and playback attempted
   const attachRemoteStream = useCallback((stream) => {
-    if (remoteVideoRef.current && remoteVideoRef.current.srcObject !== stream) {
-      remoteVideoRef.current.srcObject = stream;
+    if (!remoteVideoRef.current) return;
+    try {
+      if (remoteVideoRef.current.srcObject !== stream) {
+        remoteVideoRef.current.srcObject = stream;
+        // try to play (some browsers require user gesture; this is best-effort)
+        const p = remoteVideoRef.current.play();
+        if (p && p.catch) p.catch(() => {/* ignore autoplay block */});
+      }
+    } catch (e) {
+      console.warn('attachRemoteStream error', e);
     }
   }, []);
 
-  // Non-destructive cleanup used during hang-up / cancel:
-  // resets UI state and removes peers (but doesn't fully disconnect socket)
-  const cleanUpCall = useCallback(
-    (navigateOnEnd = false) => {
-      clearTimeout(callTimeoutRef.current);
+  const stopLocalMediaTracks = useCallback(() => {
+    try {
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((t) => {
+          try { t.stop(); } catch (e) {}
+        });
+      }
+    } catch (e) {
+      console.warn('stopLocalMediaTracks error', e);
+    } finally {
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      setLocalStream(null);
+      localStreamRef.current = null;
+      setIsAudioMuted(false);
+      setIsVideoEnabled(false);
+    }
+  }, []);
 
-      // destroy peers and clear refs
+  const stopAllPeers = useCallback(() => {
+    try {
       peersRef.current.forEach(({ peer }) => {
-        try { peer.destroy(); } catch (e) { /* ignore */ }
+        try { peer.destroy(); } catch (e) {}
       });
+    } catch (e) {
+      console.warn('stopAllPeers error', e);
+    } finally {
       peersRef.current = [];
       setPeers([]);
-
-      // stop local stream tracks (UI-level cleanup)
-      if (localStreamRef.current) {
-        try {
-          localStreamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
-        } catch (e) {}
-      }
-
-      // clear UI video elements
-      if (localVideoRef.current) localVideoRef.current.srcObject = null;
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-
-      // reset UI states
-      setInCall(false);
-      setIsCalling(false);
-      setLocalStream(null);
-      setCallRoomId(null);
-      setIsAudioMuted(false);
-      setIsVideoEnabled(true);
-
-      // stop call timer
-      clearInterval(callTimerInterval.current);
-      callTimerInterval.current = null;
-      callStartRef.current = null;
-      setCallDuration(0);
-
-      if (navigateOnEnd) {
-        navigate(`/chat/${recipientId}`);
-      }
-    },
-    [navigate, recipientId]
-  );
-
-  // Destructive cleanup to be done on unmount or when we need to forcibly stop everything.
-  const performDestructiveCleanup = useCallback(() => {
-    // destroy peers
-    peersRef.current.forEach(({ peer }) => {
-      try { peer.destroy(); } catch (e) { /* ignore */ }
-    });
-    peersRef.current = [];
-
-    // stop local stream tracks
-    if (localStreamRef.current) {
-      try {
-        localStreamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch (e) {} });
-      } catch (e) {}
-      localStreamRef.current = null;
     }
-
-    // disconnect socket
-    if (socket.current) {
-      try {
-        socket.current.removeAllListeners();
-        socket.current.disconnect();
-      } catch (e) { /* ignore */ }
-      socket.current = null;
-    }
-
-    // clear video elements
-    if (localVideoRef.current) localVideoRef.current.srcObject = null;
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-
-    // clear timers
-    clearTimeout(callTimeoutRef.current);
-    clearInterval(callTimerInterval.current);
-    callTimerInterval.current = null;
-    callStartRef.current = null;
-    setCallDuration(0);
   }, []);
 
-  // Start call timer
   const startCallTimer = useCallback(() => {
     callStartRef.current = Date.now();
     setCallDuration(0);
@@ -176,14 +138,135 @@ const VideoCall = () => {
     }, 1000);
   }, []);
 
-  // Stop call timer
   const stopCallTimer = useCallback(() => {
-    clearInterval(callTimerInterval.current);
-    callTimerInterval.current = null;
+    if (callTimerInterval.current) {
+      clearInterval(callTimerInterval.current);
+      callTimerInterval.current = null;
+    }
     callStartRef.current = null;
+    setCallDuration(0);
   }, []);
 
-  // Initialize socket once on mount and set up listeners once
+  const cleanUpCall = useCallback((navigateOnEnd = false) => {
+    // UI-level cleanup (non-destructive)
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+    }
+    stopCallTimer();
+    stopAllPeers();
+    stopLocalMediaTracks();
+
+    setInCall(false);
+    setIsCalling(false);
+    setCallRoomId(null);
+    setIsAudioMuted(false);
+    setIsVideoEnabled(true);
+
+    if (navigateOnEnd) {
+      navigate(`/chat/${recipientId}`);
+    }
+  }, [navigate, recipientId, stopAllPeers, stopLocalMediaTracks, stopCallTimer]);
+
+  const performDestructiveCleanup = useCallback(() => {
+    // Full teardown: peers, tracks, socket listeners & disconnect
+    try {
+      stopAllPeers();
+      stopLocalMediaTracks();
+
+      if (socket.current) {
+        try {
+          socket.current.removeAllListeners();
+          socket.current.disconnect();
+        } catch (e) { /* ignore */ }
+        socket.current = null;
+      }
+    } finally {
+      if (localVideoRef.current) localVideoRef.current.srcObject = null;
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
+      stopCallTimer();
+      setError(null);
+    }
+  }, [stopAllPeers, stopLocalMediaTracks, stopCallTimer]);
+
+  // --- Peer creation helpers ---
+
+  const createPeer = useCallback((userToSignal, callerId, stream) => {
+    if (!stream) {
+      console.error('No local stream for createPeer');
+      return null;
+    }
+    const peer = new Peer({
+      initiator: true,
+      trickle: false,
+      config: configuration,
+      stream,
+    });
+
+    peer.on('signal', (signal) => {
+      safeEmit('sending_signal', { userToSignal, callerId, signal });
+    });
+
+    peer.on('stream', (remoteStream) => {
+      attachRemoteStream(remoteStream);
+    });
+
+    peer.on('close', () => {
+      peersRef.current = peersRef.current.filter((p) => p.peer !== peer);
+      setPeers((prev) => prev.filter((p) => p !== peer));
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error', err);
+      setError('Peer connection error. Please try again.');
+    });
+
+    return peer;
+  }, [attachRemoteStream]);
+
+  const addPeer = useCallback((incomingSignal, callerId, stream) => {
+    if (!stream) {
+      console.error('No local stream for addPeer');
+      return null;
+    }
+    const peer = new Peer({
+      initiator: false,
+      trickle: false,
+      config: configuration,
+      stream,
+    });
+
+    peer.on('signal', (signal) => {
+      safeEmit('returning_signal', { signal, callerId });
+    });
+
+    peer.on('stream', (remoteStream) => {
+      attachRemoteStream(remoteStream);
+    });
+
+    peer.on('close', () => {
+      peersRef.current = peersRef.current.filter((p) => p.peer !== peer);
+      setPeers((prev) => prev.filter((p) => p !== peer));
+    });
+
+    peer.on('error', (err) => {
+      console.error('Peer error', err);
+      setError('Peer connection error. Please try again.');
+    });
+
+    try {
+      peer.signal(incomingSignal);
+    } catch (e) {
+      console.warn('signal error', e);
+    }
+    return peer;
+  }, [attachRemoteStream]);
+
+  // --- Socket initialization & listeners ---
   useEffect(() => {
     mounted.current = true;
 
@@ -206,10 +289,24 @@ const VideoCall = () => {
         setError('Failed to connect to server. Retrying...');
       });
 
-      // When callee accepts, server should notify caller with this event
-      socket.current.on('video_call_accepted', ({ roomId, callerId }) => {
+      socket.current.on('disconnect', (reason) => {
+        console.warn('Socket disconnected:', reason);
+        // If we were in an active call, inform user and cleanup after short timeout
+        setError(`Disconnected: ${reason}`);
+        if (inCall || isCalling) {
+          // try minimal graceful cleanup locally
+          cleanUpCall(true);
+          performDestructiveCleanup();
+        }
+      });
+
+      // Caller receives acceptance
+      socket.current.on('video_call_accepted', ({ roomId }) => {
         if (!mounted.current) return;
-        clearTimeout(callTimeoutRef.current);
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+        }
         setIsCalling(false);
         setInCall(true);
         setCallRoomId(roomId);
@@ -217,10 +314,12 @@ const VideoCall = () => {
         startCallTimer();
       });
 
-      // Defensive: some servers may emit different event name
       socket.current.on('call_accepted', ({ roomId }) => {
         if (!mounted.current) return;
-        clearTimeout(callTimeoutRef.current);
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+        }
         setIsCalling(false);
         setInCall(true);
         setCallRoomId(roomId);
@@ -230,18 +329,32 @@ const VideoCall = () => {
 
       socket.current.on('video_call_rejected', () => {
         if (!mounted.current) return;
-        clearTimeout(callTimeoutRef.current);
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
+        }
         setError('Call rejected by the other user.');
+        // ensure tracks stopped
         cleanUpCall(true);
+        performDestructiveCleanup();
       });
 
       socket.current.on('video_call_canceled', () => {
         if (!mounted.current) return;
-        setError('Call was canceled by the caller.');
+        setError('Call canceled by the caller.');
+        // ensure full cleanup and stop camera
         cleanUpCall(true);
+        performDestructiveCleanup();
       });
 
-      // When we join the room, server should emit the list of existing users in the room
+      socket.current.on('video_call_timeout', () => {
+        if (!mounted.current) return;
+        setError('Call timed out (no answer).');
+        cleanUpCall(true);
+        performDestructiveCleanup();
+      });
+
+      // When we join the room we get existing users
       socket.current.on('all_users', (users) => {
         if (!mounted.current || !localStreamRef.current) return;
         const newPeers = [];
@@ -278,14 +391,12 @@ const VideoCall = () => {
         }
       });
 
-      // When the other side ends, server should emit call_ended (or end_call). Handle both.
+      // remote ended the call
       socket.current.on('call_ended', () => {
         if (!mounted.current) return;
         setError('Call ended by the other user.');
-        // full cleanup and stop camera
         cleanUpCall(true);
         performDestructiveCleanup();
-        stopCallTimer();
       });
 
       socket.current.on('end_call', () => {
@@ -293,14 +404,13 @@ const VideoCall = () => {
         setError('Call ended by the other user.');
         cleanUpCall(true);
         performDestructiveCleanup();
-        stopCallTimer();
       });
 
       socket.current.on('user_left', (id) => {
         if (!mounted.current) return;
         const peerObj = peersRef.current.find((p) => p.peerId === id);
         if (peerObj) {
-          try { peerObj.peer.destroy(); } catch (e) { /* ignore */ }
+          try { peerObj.peer.destroy(); } catch (e) {}
         }
         peersRef.current = peersRef.current.filter((p) => p.peerId !== id);
         setPeers((prevPeers) => prevPeers.filter((p) => p.peerId !== id));
@@ -308,7 +418,6 @@ const VideoCall = () => {
           setError('All participants left the call.');
           cleanUpCall(true);
           performDestructiveCleanup();
-          stopCallTimer();
         }
       });
     }
@@ -321,9 +430,9 @@ const VideoCall = () => {
       performDestructiveCleanup();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run only once on mount
+  }, []); // run once on mount
 
-  // start / accept logic in a separate effect so it doesn't recreate socket
+  // handle route type: initiate or accept
   useEffect(() => {
     if (!socket.current) return;
     if (type === 'initiate') {
@@ -335,131 +444,47 @@ const VideoCall = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, queryRoomId]);
 
-  // attach local stream to local video element (UI only)
+  // attach local stream to preview element
   useEffect(() => {
     if (localStream && localVideoRef.current) {
       if (localVideoRef.current.srcObject !== localStream) {
         localVideoRef.current.srcObject = localStream;
+        const p = localVideoRef.current.play();
+        if (p && p.catch) p.catch(() => {});
       }
     }
   }, [localStream]);
 
-  // Create a new Peer (initiator)
-  const createPeer = (userToSignal, callerId, stream) => {
-    if (!stream) {
-      console.error('No local stream available for peer creation');
-      return null;
-    }
-    const peer = new Peer({
-      initiator: true,
-      trickle: false,
-      config: configuration,
-      stream,
-    });
-
-    peer.on('signal', (signal) => {
-      if (mounted.current && socket.current) {
-        socket.current.emit('sending_signal', { userToSignal, callerId, signal });
-      }
-    });
-
-    peer.on('stream', (remoteStream) => {
-      if (mounted.current) {
-        attachRemoteStream(remoteStream);
-      }
-    });
-
-    peer.on('close', () => {
-      peersRef.current = peersRef.current.filter((p) => p.peer !== peer);
-      setPeers((prev) => prev.filter((p) => p !== peer));
-    });
-
-    peer.on('error', (err) => {
-      console.error('Peer error:', err);
-      if (mounted.current) {
-        setError('Connection error occurred. Please try again.');
-      }
-    });
-
-    return peer;
-  };
-
-  // Add a peer (non-initiator)
-  const addPeer = (incomingSignal, callerId, stream) => {
-    if (!stream) {
-      console.error('No local stream available for adding peer');
-      return null;
-    }
-    const peer = new Peer({
-      initiator: false,
-      trickle: false,
-      config: configuration,
-      stream,
-    });
-
-    peer.on('signal', (signal) => {
-      if (mounted.current && socket.current) {
-        socket.current.emit('returning_signal', { signal, callerId });
-      }
-    });
-
-    peer.on('stream', (remoteStream) => {
-      if (mounted.current) {
-        attachRemoteStream(remoteStream);
-      }
-    });
-
-    peer.on('close', () => {
-      peersRef.current = peersRef.current.filter((p) => p.peer !== peer);
-      setPeers((prev) => prev.filter((p) => p !== peer));
-    });
-
-    peer.on('error', (err) => {
-      console.error('Peer error:', err);
-      if (mounted.current) {
-        setError('Connection error occurred. Please try again.');
-      }
-    });
-
-    try {
-      peer.signal(incomingSignal);
-    } catch (e) {
-      console.warn('signal error', e);
-    }
-    return peer;
-  };
+  // --- Actions: start / accept / join / end ---
 
   const startVideoCall = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-
-      // store stream in both state and ref
       setLocalStream(stream);
       localStreamRef.current = stream;
-
-      // attach immediately to local video (caller sees themselves)
       if (localVideoRef.current && localVideoRef.current.srcObject !== stream) {
         localVideoRef.current.srcObject = stream;
+        const p = localVideoRef.current.play();
+        if (p && p.catch) p.catch(() => {});
       }
 
       const roomId = [currentUserId, recipientId].sort().join('_');
       setCallRoomId(roomId);
       setIsCalling(true);
 
-      if (socket.current) {
-        socket.current.emit('video_call_request', { callerId: currentUserId, recipientId, roomId });
-      }
+      safeEmit('video_call_request', { callerId: currentUserId, recipientId, roomId });
 
-      // ringing timeout
-      clearTimeout(callTimeoutRef.current);
+      // Start ring timeout for caller
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
       callTimeoutRef.current = setTimeout(() => {
+        // if still ringing and not answered -> timeout
         if (mounted.current && isCalling && !inCall) {
           setError('Call timed out. No answer.');
+          safeEmit('video_call_cancel', { recipientId, roomId }); // inform callee/server
           cleanUpCall(true);
-          // also destructive cleanup so camera stops
           performDestructiveCleanup();
         }
-      }, 40000);
+      }, RING_TIMEOUT_MS);
     } catch (err) {
       console.error('Error accessing media devices:', err);
       setError('Failed to access camera/microphone. Please check permissions.');
@@ -467,24 +492,23 @@ const VideoCall = () => {
   };
 
   const acceptVideoCall = async () => {
+    if (!callRoomId) {
+      setError('No call room to accept.');
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-
       setLocalStream(stream);
       localStreamRef.current = stream;
 
-      // attach local preview
       if (localVideoRef.current && localVideoRef.current.srcObject !== stream) {
         localVideoRef.current.srcObject = stream;
+        const p = localVideoRef.current.play();
+        if (p && p.catch) p.catch(() => {});
       }
 
       setInCall(true);
-
-      // If server expects callerId, we try to extract caller id; if unavailable, server should derive from room
-      if (socket.current) {
-        socket.current.emit('video_call_accept', { calleeId: currentUserId, roomId: callRoomId });
-      }
-
+      safeEmit('video_call_accept', { calleeId: currentUserId, roomId: callRoomId });
       joinVideoRoom(callRoomId);
       startCallTimer();
     } catch (err) {
@@ -494,62 +518,66 @@ const VideoCall = () => {
   };
 
   const joinVideoRoom = (roomId) => {
-    if (socket.current && mounted.current) {
-      socket.current.emit('join_video_room', roomId);
+    if (socket.current && mounted.current && roomId) {
+      safeEmit('join_video_room', roomId);
     }
   };
 
   const toggleAudioMute = () => {
     if (localStreamRef.current) {
-      localStreamRef.current.getAudioTracks().forEach((track) => {
-        track.enabled = !track.enabled;
-      });
-      setIsAudioMuted((s) => !s);
+      try {
+        localStreamRef.current.getAudioTracks().forEach((track) => {
+          track.enabled = !track.enabled;
+        });
+        setIsAudioMuted((s) => !s);
+      } catch (e) {
+        console.warn('toggleAudioMute error', e);
+      }
     }
   };
 
   const toggleVideo = () => {
     if (localStreamRef.current) {
-      localStreamRef.current.getVideoTracks().forEach((track) => {
-        track.enabled = !track.enabled;
-      });
-      setIsVideoEnabled((s) => !s);
+      try {
+        localStreamRef.current.getVideoTracks().forEach((track) => {
+          track.enabled = !track.enabled;
+        });
+        setIsVideoEnabled((s) => !s);
+      } catch (e) {
+        console.warn('toggleVideo error', e);
+      }
     }
   };
 
-  const switchCamera = () => {
-    setActiveVideo((prev) => (prev === 'remote' ? 'local' : 'remote'));
-  };
+  // just UI swap of which video is maximized
+  const [activeVideo, setActiveVideo] = useState('remote');
+  const switchCamera = () => setActiveVideo((prev) => (prev === 'remote' ? 'local' : 'remote'));
 
   const endCall = () => {
-    // notify server about hangup and clean up UI + stop camera
-    if (socket.current) {
-      try {
-        if (isCalling && !inCall) {
-          socket.current.emit('video_call_cancel', { recipientId, roomId: callRoomId });
-        } else if (inCall) {
-          socket.current.emit('end_call', { roomId: callRoomId });
-        }
-      } catch (e) { /* ignore */ }
-    }
+    // notify server
+    try {
+      if (isCalling && !inCall) {
+        safeEmit('video_call_cancel', { recipientId, roomId: callRoomId });
+      } else if (inCall) {
+        safeEmit('end_call', { roomId: callRoomId });
+      }
+    } catch (e) { /* ignore */ }
 
     cleanUpCall(true);
     performDestructiveCleanup();
-    stopCallTimer();
   };
 
   return (
     <div className="video-call-window">
       {error && <div className="error-message">{error}</div>}
 
-      {/* Call duration shown when in call */}
       {inCall && (
         <div className="call-duration">
           <span>Duration: {formatDuration(callDuration)}</span>
         </div>
       )}
 
-      {isCalling && (
+      {isCalling && !inCall && (
         <div className="ringing">
           <p>Ringing...</p>
           <button onClick={endCall}>Cancel</button>
