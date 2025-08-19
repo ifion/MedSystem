@@ -1,10 +1,15 @@
-// Merged server.js with multi-socket support, room-based chat, and concurrent 1:1 video calls
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
-const connectDB = require('./config/db');
+const mongoose = require('mongoose');
+const socketIo = require('socket.io');
+const cloudinary = require('cloudinary').v2;
+const initializeUsers = require('./utils/initializeUsers');
+const Message = require('./models/Message');
+const User = require('./models/User');
 
+// Routes
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const doctorRoutes = require('./routes/doctorRoutes');
@@ -15,37 +20,57 @@ const prescriptionRoutes = require('./routes/prescriptionRoutes');
 const messagesRoutes = require('./routes/messageRoutes');
 const testResultRoutes = require('./routes/testResultRoutes');
 
-const cloudinary = require('cloudinary').v2;
-const initializeUsers = require('./utils/initializeUsers');
-const socketIo = require('socket.io');
-
-const Message = require('./models/Message');
-const User = require('./models/User');
-
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: process.env.CLIENT_URL,
+    origin: process.env.CLIENT_URL || '*',
     methods: ['GET', 'POST'],
-  }
+  },
 });
 
-// Cloudinary
+// Cloudinary Configuration
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Express middleware
-app.use(cors({ origin: process.env.CLIENT_URL }));
-app.use(express.json());
+// MongoDB Connection
+const connectDB = async () => {
+  try {
+    await mongoose.connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
+      maxPoolSize: 10,
+      retryWrites: true,
+      retryReads: true,
+    });
+    console.log('MongoDB connected successfully');
+  } catch (err) {
+    console.error('MongoDB connection error:', err);
+    process.exit(1);
+  }
 
-// DB
+  mongoose.connection.on('disconnected', () => {
+    console.warn('MongoDB disconnected. Attempting to reconnect...');
+    setTimeout(connectDB, 5000);
+  });
+
+  mongoose.connection.on('error', (err) => {
+    console.error('MongoDB error:', err);
+  });
+};
+
+// Connect to MongoDB
 connectDB();
 
-// REST routes
+// Express Middleware
+app.use(cors({ origin: process.env.CLIENT_URL || '*' }));
+app.use(express.json());
+
+// REST Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/doctor', doctorRoutes);
@@ -60,40 +85,38 @@ app.get('/', (req, res) => {
   res.send('API is running...');
 });
 
-// ------- Socket state -------
+// Socket State
 const connectedUsers = new Map(); // userId => Set<socket.id>
-const rooms = new Map();          // roomId => Set<socket.id>
+const rooms = new Map(); // roomId => Set<socket.id>
 app.set('io', io);
 app.set('connectedUsers', connectedUsers);
 
-// ------- Socket.IO auth middleware -------
+// Socket.IO Auth Middleware
 io.use((socket, next) => {
   const userId = socket.handshake.query.userId;
   if (!userId) {
-    console.error('Connection rejected: No userId provided in query.');
+    console.error('Connection rejected: No userId provided.');
     return next(new Error('Authentication error: No userId provided.'));
   }
   socket.userId = String(userId);
   next();
 });
 
-// ------- Socket.IO main -------
 io.on('connection', async (socket) => {
   const userId = socket.userId;
   const recipientId = socket.handshake.query.recipientId ? String(socket.handshake.query.recipientId) : null;
   console.log(`[IO] connected socket=${socket.id} user=${userId} recipient=${recipientId || '-'}`);
 
-  // Derive roomId if recipientId is provided for 1:1 chat (text chat)
+  // If they connected with a recipient param, join the private chat room (optional)
   if (recipientId) {
     const chatRoomId = [userId, recipientId].sort().join('_');
     socket.join(chatRoomId);
   }
 
-  // Register user with multi-socket support
   if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
   connectedUsers.get(userId).add(socket.id);
 
-  // First socket online -> mark user online
+  // update online status once per-user when they first connect
   if (connectedUsers.get(userId).size === 1) {
     try {
       await User.findByIdAndUpdate(userId, { isOnline: true });
@@ -103,13 +126,13 @@ io.on('connection', async (socket) => {
     }
   }
 
-  // ---------- MESSAGING ----------
   socket.on('typing', async ({ senderId, recipientId }) => {
     try {
       const typingRoomId = [String(senderId), String(recipientId)].sort().join('_');
       const username = (await User.findById(senderId).select('username'))?.username;
-      if (!username) return;
-      socket.to(typingRoomId).emit('userTyping', { userId: String(senderId), username });
+      if (username) {
+        socket.to(typingRoomId).emit('userTyping', { userId: String(senderId), username });
+      }
     } catch (error) {
       console.error('Error fetching username:', error);
     }
@@ -124,9 +147,8 @@ io.on('connection', async (socket) => {
     try {
       const messageRoomId = [
         String(messageData.sender?._id || messageData.sender),
-        String(messageData.recipientId)
+        String(messageData.recipientId),
       ].sort().join('_');
-
       io.to(messageRoomId).emit('newMessage', messageData);
       socket.emit('messageSent', messageData);
       if (callback) callback({ status: 'sent' });
@@ -171,112 +193,149 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // ---------- VIDEO CALL SIGNALING (socket.id-precise) ----------
-  // 1) Caller rings recipient (by userId). Include roomId and the caller's socket.id.
-  socket.on('video_call_request', ({ callerId, recipientId }, cb) => {
-    const cid = String(callerId);
-    const rid = String(recipientId);
-    const callRoomId = [cid, rid].sort().join('_');
-    const recipientSockets = connectedUsers.get(rid) || [];
-    console.log(`[CALL] request ${cid} -> ${rid} room=${callRoomId}`);
+  // --- Video call flow ---------------------------------------------------
 
-    for (const sid of recipientSockets) {
-      io.to(sid).emit('incoming_video_call', {
-        callerId: cid,
-        callerSocketId: socket.id,
-        roomId: callRoomId,
-      });
+  socket.on('video_call_request', ({ callerId, recipientId, roomId }, cb) => {
+    try {
+      const cid = String(callerId);
+      const rid = String(recipientId);
+      console.log(`[CALL] request ${cid} -> ${rid} room=${roomId}`);
+      const recipientSockets = connectedUsers.get(rid) || [];
+      for (const sid of recipientSockets) {
+        io.to(sid).emit('incoming_video_call', {
+          callerId: cid,
+          callerSocketId: socket.id,
+          roomId,
+        });
+      }
+      if (cb) cb({ status: 'requested', roomId });
+    } catch (err) {
+      console.error('video_call_request error:', err);
+      if (cb) cb({ status: 'error' });
     }
-    cb && cb({ status: 'requested', roomId: callRoomId });
   });
 
-  // 2) Recipient accepts; notify the exact caller socket by id.
   socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
-    console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
-    io.to(callerSocketId).emit('video_call_accepted', { roomId });
+    try {
+      console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
+      socket.join(roomId);
+      if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+      rooms.get(roomId).add(socket.id);
+      // notify caller to join + start establishing peers
+      io.to(callerSocketId).emit('video_call_accepted', { roomId });
+    } catch (err) {
+      console.error('video_call_accept error:', err);
+    }
   });
 
-  // 3) Recipient rejects; notify exact caller socket by id.
   socket.on('video_call_reject', ({ callerSocketId }) => {
-    console.log(`[CALL] reject notify callerSocketId=${callerSocketId}`);
-    io.to(callerSocketId).emit('video_call_rejected');
+    try {
+      console.log(`[CALL] reject notify callerSocketId=${callerSocketId}`);
+      io.to(callerSocketId).emit('video_call_rejected');
+    } catch (err) {
+      console.error('video_call_reject error:', err);
+    }
   });
 
-  // 4) Caller cancels before pickup; notify all recipient sockets.
   socket.on('video_call_cancel', ({ recipientId }) => {
-    const rid = String(recipientId);
-    console.log(`[CALL] cancel -> ${rid}`);
-    const recipientSockets = connectedUsers.get(rid) || [];
-    for (const sid of recipientSockets) io.to(sid).emit('video_call_canceled');
+    try {
+      const rid = String(recipientId);
+      console.log(`[CALL] cancel -> ${rid}`);
+      const recipientSockets = connectedUsers.get(rid) || [];
+      for (const sid of recipientSockets) io.to(sid).emit('video_call_canceled');
+    } catch (err) {
+      console.error('video_call_cancel error:', err);
+    }
   });
 
-  // 5) Join WebRTC room (by roomId). Send existing socket ids to the new joiner to initiate offers.
   socket.on('join_video_room', (roomId) => {
-    console.log(`[ROOM] ${socket.id} join ${roomId}`);
-    socket.join(roomId);
-    if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-    const set = rooms.get(roomId);
-    set.add(socket.id);
-
-    const others = Array.from(set).filter((id) => id !== socket.id);
-    socket.emit('all_users', others); // only to the new joiner
+    try {
+      if (!roomId) return;
+      console.log(`[ROOM] ${socket.id} join ${roomId}`);
+      socket.join(roomId);
+      if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+      const set = rooms.get(roomId);
+      set.add(socket.id);
+      const others = Array.from(set).filter((id) => id !== socket.id);
+      // send the list of other socket ids in the room so client can create peers
+      socket.emit('all_users', others);
+    } catch (err) {
+      console.error('join_video_room error:', err);
+    }
   });
 
-  // 6) Low-level WebRTC signaling by socket.id (simple-peer)
   socket.on('sending_signal', ({ userToSignal, signal }) => {
-    // userToSignal is the target socket.id
-    io.to(userToSignal).emit('user_joined', { signal, callerId: socket.id });
+    try {
+      // userToSignal should be a socket id (from join_video_room/all_users)
+      if (userToSignal) {
+        io.to(userToSignal).emit('user_joined', { signal, callerId: socket.id });
+      }
+    } catch (err) {
+      console.error('sending_signal error:', err);
+    }
   });
 
   socket.on('returning_signal', ({ signal, callerId }) => {
-    // callerId is the original initiator's socket.id
-    io.to(callerId).emit('receiving_returned_signal', { signal, id: socket.id });
-  });
-
-  // 7) End call for everyone in the room
-  socket.on('end_call', (roomId) => {
-    console.log(`[CALL] end ${roomId}`);
-    io.in(roomId).emit('call_ended');
-  });
-
-  // ---------- DISCONNECT ----------
-  socket.on('disconnect', async () => {
-    console.log(`[IO] disconnected socket=${socket.id} user=${userId}`);
-
-    // remove from user map
-    const set = connectedUsers.get(userId);
-    if (set) {
-      set.delete(socket.id);
-      if (set.size === 0) {
-        connectedUsers.delete(userId);
-        try {
-          await User.findByIdAndUpdate(userId, { isOnline: false });
-          io.emit('userStatusChange', { userId, isOnline: false });
-        } catch (err) {
-          console.error('Error updating offline status:', err);
-        }
-        console.log(`User ${userId} disconnected and went offline`);
+    try {
+      if (callerId) {
+        io.to(callerId).emit('receiving_returned_signal', { signal, id: socket.id });
       }
+    } catch (err) {
+      console.error('returning_signal error:', err);
     }
+  });
 
-    // Clean up video call rooms
-    rooms.forEach((value, key) => {
-      if (value.has(socket.id)) {
-        value.delete(socket.id);
-        if (value.size === 0) {
-          rooms.delete(key);
-        } else {
-          io.in(key).emit('user_left', socket.id);
+  socket.on('end_call', (roomId) => {
+    try {
+      if (!roomId) return;
+      console.log(`[CALL] end ${roomId}`);
+      io.in(roomId).emit('call_ended');
+      // cleanup room state
+      rooms.delete(roomId);
+    } catch (err) {
+      console.error('end_call error:', err);
+    }
+  });
+
+  // graceful disconnect
+  socket.on('disconnect', async () => {
+    try {
+      console.log(`[IO] disconnected socket=${socket.id} user=${userId}`);
+      const set = connectedUsers.get(userId);
+      if (set) {
+        set.delete(socket.id);
+        if (set.size === 0) {
+          connectedUsers.delete(userId);
+          try {
+            await User.findByIdAndUpdate(userId, { isOnline: false });
+            io.emit('userStatusChange', { userId, isOnline: false });
+          } catch (err) {
+            console.error('Error updating offline status:', err);
+          }
         }
       }
-    });
+
+      // remove socket from any rooms and notify participants
+      rooms.forEach((value, key) => {
+        if (value.has(socket.id)) {
+          value.delete(socket.id);
+          if (value.size === 0) {
+            rooms.delete(key);
+          } else {
+            io.in(key).emit('user_left', socket.id);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('disconnect handler error:', err);
+    }
   });
 });
 
 // Initialize default users
 initializeUsers().catch((err) => console.error('User initialization failed:', err));
 
-// Start
+// Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
