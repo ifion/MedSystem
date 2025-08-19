@@ -1,4 +1,4 @@
-// server.js — unified REST + Socket.IO with multi-socket presence & 1:1 WebRTC signaling
+// Merged server.js with multi-socket support, room-based chat, and concurrent 1:1 video calls
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
@@ -31,21 +31,21 @@ const io = socketIo(server, {
   }
 });
 
-// -------- Cloudinary --------
+// Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// -------- Express middleware --------
+// Express middleware
 app.use(cors({ origin: process.env.CLIENT_URL }));
 app.use(express.json());
 
-// -------- DB --------
+// DB
 connectDB();
 
-// -------- REST routes --------
+// REST routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/doctor', doctorRoutes);
@@ -60,17 +60,13 @@ app.get('/', (req, res) => {
   res.send('API is running...');
 });
 
-// ================== Socket State ==================
-/**
- * connectedUsers: Map<userId, Set<socketId>>
- * rooms:          Map<roomId, Set<socketId>>   where roomId = [userA,userB].sort().join('_')
- */
-const connectedUsers = new Map();
-const rooms = new Map();
+// ------- Socket state -------
+const connectedUsers = new Map(); // userId => Set<socket.id>
+const rooms = new Map();          // roomId => Set<socket.id>
 app.set('io', io);
 app.set('connectedUsers', connectedUsers);
 
-// ================== Socket.IO Auth ==================
+// ------- Socket.IO auth middleware -------
 io.use((socket, next) => {
   const userId = socket.handshake.query.userId;
   if (!userId) {
@@ -81,23 +77,23 @@ io.use((socket, next) => {
   next();
 });
 
-// ================== Socket.IO Main ==================
+// ------- Socket.IO main -------
 io.on('connection', async (socket) => {
   const userId = socket.userId;
   const recipientId = socket.handshake.query.recipientId ? String(socket.handshake.query.recipientId) : null;
   console.log(`[IO] connected socket=${socket.id} user=${userId} recipient=${recipientId || '-'}`);
 
-  // (Optional) join 1:1 text chat room if a recipientId was provided
+  // Derive roomId if recipientId is provided for 1:1 chat (text chat)
   if (recipientId) {
     const chatRoomId = [userId, recipientId].sort().join('_');
     socket.join(chatRoomId);
   }
 
-  // register multi-socket presence
+  // Register user with multi-socket support
   if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
   connectedUsers.get(userId).add(socket.id);
 
-  // first socket online -> mark user online
+  // First socket online -> mark user online
   if (connectedUsers.get(userId).size === 1) {
     try {
       await User.findByIdAndUpdate(userId, { isOnline: true });
@@ -107,7 +103,7 @@ io.on('connection', async (socket) => {
     }
   }
 
-  // ------------- Messaging -------------
+  // ---------- MESSAGING ----------
   socket.on('typing', async ({ senderId, recipientId }) => {
     try {
       const typingRoomId = [String(senderId), String(recipientId)].sort().join('_');
@@ -175,74 +171,38 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // ------------- Video Call Signaling (simple-peer) -------------
-
-  /**
-   * Caller rings recipient.
-   * Client payload: { recipientId, roomId }  // roomId = [callerId, recipientId].sort().join('_')
-   * We derive callerId from the connected socket.
-   */
-  socket.on('video_call_request', ({ recipientId, roomId }, cb) => {
-    const callerId = socket.userId;
+  // ---------- VIDEO CALL SIGNALING (socket.id-precise) ----------
+  // 1) Caller rings recipient (by userId). Include roomId and the caller's socket.id.
+  socket.on('video_call_request', ({ callerId, recipientId }, cb) => {
+    const cid = String(callerId);
     const rid = String(recipientId);
-    const safeRoomId = roomId || [callerId, rid].sort().join('_');
-
+    const callRoomId = [cid, rid].sort().join('_');
     const recipientSockets = connectedUsers.get(rid) || [];
-    console.log(`[CALL] request ${callerId} -> ${rid} room=${safeRoomId}`);
+    console.log(`[CALL] request ${cid} -> ${rid} room=${callRoomId}`);
 
-    // Notify all recipient sockets (your UI outside VideoCall can listen for this)
     for (const sid of recipientSockets) {
       io.to(sid).emit('incoming_video_call', {
-        roomId: safeRoomId,
-        from: callerId,
+        callerId: cid,
+        callerSocketId: socket.id,
+        roomId: callRoomId,
       });
     }
-
-    cb && cb({ status: 'requested', roomId: safeRoomId });
+    cb && cb({ status: 'requested', roomId: callRoomId });
   });
 
-  /**
-   * Recipient accepts the call.
-   * Client payload: { roomId }
-   * Server finds the other user from roomId and notifies all their sockets.
-   * The caller then joins the room in the client after receiving 'video_call_accepted'.
-   */
-  socket.on('video_call_accept', ({ roomId }) => {
-    if (!roomId) return;
-    const [u1, u2] = roomId.split('_');
-    const accepterId = socket.userId;
-    const otherUserId = accepterId === u1 ? u2 : u1;
-
-    console.log(`[CALL] accept room=${roomId} accepter=${accepterId} -> notify other=${otherUserId}`);
-    const otherSockets = connectedUsers.get(otherUserId) || [];
-    for (const sid of otherSockets) {
-      io.to(sid).emit('video_call_accepted', { roomId });
-    }
+  // 2) Recipient accepts; notify the exact caller socket by id.
+  socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
+    console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
+    io.to(callerSocketId).emit('video_call_accepted', { roomId });
   });
 
-  /**
-   * Recipient rejects the call.
-   * Client payload: { roomId }
-   * Notify the other user (caller) that it was rejected.
-   */
-  socket.on('video_call_reject', ({ roomId }) => {
-    if (!roomId) return;
-    const [u1, u2] = roomId.split('_');
-    const rejectorId = socket.userId;
-    const otherUserId = rejectorId === u1 ? u2 : u1;
-
-    console.log(`[CALL] reject room=${roomId} rejector=${rejectorId} -> notify other=${otherUserId}`);
-    const otherSockets = connectedUsers.get(otherUserId) || [];
-    for (const sid of otherSockets) {
-      io.to(sid).emit('video_call_rejected');
-    }
+  // 3) Recipient rejects; notify exact caller socket by id.
+  socket.on('video_call_reject', ({ callerSocketId }) => {
+    console.log(`[CALL] reject notify callerSocketId=${callerSocketId}`);
+    io.to(callerSocketId).emit('video_call_rejected');
   });
 
-  /**
-   * Caller cancels before pickup.
-   * Client payload: { recipientId }
-   * Notify all recipient sockets.
-   */
+  // 4) Caller cancels before pickup; notify all recipient sockets.
   socket.on('video_call_cancel', ({ recipientId }) => {
     const rid = String(recipientId);
     console.log(`[CALL] cancel -> ${rid}`);
@@ -250,56 +210,40 @@ io.on('connection', async (socket) => {
     for (const sid of recipientSockets) io.to(sid).emit('video_call_canceled');
   });
 
-  /**
-   * Join WebRTC room by roomId after acceptance.
-   * Sends the list of existing socket IDs in the room to the new joiner.
-   */
+  // 5) Join WebRTC room (by roomId). Send existing socket ids to the new joiner to initiate offers.
   socket.on('join_video_room', (roomId) => {
-    if (!roomId) return;
     console.log(`[ROOM] ${socket.id} join ${roomId}`);
     socket.join(roomId);
-
     if (!rooms.has(roomId)) rooms.set(roomId, new Set());
     const set = rooms.get(roomId);
     set.add(socket.id);
 
     const others = Array.from(set).filter((id) => id !== socket.id);
-    socket.emit('all_users', others);
+    socket.emit('all_users', others); // only to the new joiner
   });
 
-  // Low-level WebRTC signaling (by socket.id) for simple-peer
-  socket.on('sending_signal', ({ userToSignal, callerId, signal }) => {
+  // 6) Low-level WebRTC signaling by socket.id (simple-peer)
+  socket.on('sending_signal', ({ userToSignal, signal }) => {
+    // userToSignal is the target socket.id
     io.to(userToSignal).emit('user_joined', { signal, callerId: socket.id });
   });
 
   socket.on('returning_signal', ({ signal, callerId }) => {
+    // callerId is the original initiator's socket.id
     io.to(callerId).emit('receiving_returned_signal', { signal, id: socket.id });
   });
 
-  /**
-   * End the call for everyone in the room.
-   * Client payload: { roomId }
-   */
-  socket.on('end_call', ({ roomId }) => {
-    if (!roomId) return;
+  // 7) End call for everyone in the room
+  socket.on('end_call', (roomId) => {
     console.log(`[CALL] end ${roomId}`);
     io.in(roomId).emit('call_ended');
-
-    // optional immediate cleanup of our room registry
-    const set = rooms.get(roomId);
-    if (set) {
-      set.forEach((sid) => {
-        // do not force leave; clients will handle cleanup on 'call_ended'
-      });
-      rooms.delete(roomId);
-    }
   });
 
-  // ------------- Disconnect Cleanup -------------
+  // ---------- DISCONNECT ----------
   socket.on('disconnect', async () => {
     console.log(`[IO] disconnected socket=${socket.id} user=${userId}`);
 
-    // presence map cleanup
+    // remove from user map
     const set = connectedUsers.get(userId);
     if (set) {
       set.delete(socket.id);
@@ -315,7 +259,7 @@ io.on('connection', async (socket) => {
       }
     }
 
-    // video rooms cleanup & notify remaining peer(s)
+    // Clean up video call rooms
     rooms.forEach((value, key) => {
       if (value.has(socket.id)) {
         value.delete(socket.id);
@@ -329,10 +273,10 @@ io.on('connection', async (socket) => {
   });
 });
 
-// -------- Initialize default users (optional) --------
+// Initialize default users
 initializeUsers().catch((err) => console.error('User initialization failed:', err));
 
-// -------- Start --------
+// Start
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
