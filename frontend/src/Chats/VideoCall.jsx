@@ -380,10 +380,21 @@ const VideoCall = () => {
     }
     const peer = new Peer({
       initiator: true,
-      trickle: false,
+      trickle: true,
       config: configuration,
       stream,
     });
+
+    peer._pc.oniceconnectionstatechange = function () {
+      const state = this.iceConnectionState;
+      console.log('ICE state change:', state);
+      if (['disconnected', 'failed', 'closed'].includes(state)) {
+        if (mounted.current) {
+          setError(`Connection ${state}.`);
+          if (inCallRef.current) cleanUpCall(false, true);
+        }
+      }
+    };
 
     peer.on('signal', (signal) => {
       if (mounted.current && socket.current) {
@@ -423,10 +434,21 @@ const VideoCall = () => {
     }
     const peer = new Peer({
       initiator: false,
-      trickle: false,
+      trickle: true,
       config: configuration,
       stream,
     });
+
+    peer._pc.oniceconnectionstatechange = function () {
+      const state = this.iceConnectionState;
+      console.log('ICE state change:', state);
+      if (['disconnected', 'failed', 'closed'].includes(state)) {
+        if (mounted.current) {
+          setError(`Connection ${state}.`);
+          if (inCallRef.current) cleanUpCall(false, true);
+        }
+      }
+    };
 
     peer.on('signal', (signal) => {
       if (mounted.current && socket.current) {
