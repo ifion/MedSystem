@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import '../Designs/Header.css';
 
 function Header() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userName, setUserName] = useState('');
   const [isScrolled, setIsScrolled] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -26,51 +26,43 @@ function Header() {
   const handleLogout = () => {
     localStorage.clear();
     setIsLoggedIn(false);
-    setShowDropdown(false);
     navigate('/');
   };
+
+  // Check page conditions
+  const isLandingPage = location.pathname === '/';
+  const isHiddenPage =
+    location.pathname.startsWith('/chat') ||
+    location.pathname.startsWith('/video-call');
+
+  if (isHiddenPage) return null; // Hide header on chat & video-call pages
 
   return (
     <header className={`header ${isScrolled ? 'scrolled' : ''}`}>
       <div className="header-container">
+        {/* Logo */}
         <Link to="/" className="logo">
           <span className="logo-icon">⚕️</span>
           <span className="logo-text">MedSystem</span>
         </Link>
-        
-        <nav className="nav-links">
-          <Link to="/#features">Features</Link>
-          <Link to="/#about">About</Link>
-          <Link to="/#services">Services</Link>
-          <Link to="/#contact">Contact</Link>
-        </nav>
 
+        {/* Show nav links only on Landing */}
+        {isLandingPage && (
+          <nav className="nav-links">
+            <a href="#features">Features</a>
+            <a href="#about">About</a>
+            <a href="#services">Services</a>
+            <a href="#contact">Contact</a>
+          </nav>
+        )}
+
+        {/* Auth buttons */}
         <div className="auth-buttons">
           {isLoggedIn ? (
-            <div className="user-menu">
-              <button 
-                className="user-profile"
-                onClick={() => setShowDropdown(!showDropdown)}
-              >
-                <span className="user-avatar">
-                  {userName.charAt(0).toUpperCase()}
-                </span>
-                <span className="user-name">{userName}</span>
-                <span className="dropdown-arrow">▼</span>
-              </button>
-              
-              {showDropdown && (
-                <div className="dropdown-menu">
-                  <Link to="/dashboard">Dashboard</Link>
-                  <Link to="/profile">Profile</Link>
-                  <Link to="/settings">Settings</Link>
-                  <button onClick={handleLogout} className="btn-logout">
-                    <span className="logout-icon">🚪</span>
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
+            <button onClick={handleLogout} className="btn-logout">
+              <span className="logout-icon">🚪</span>
+              Logout
+            </button>
           ) : (
             <div className="auth-buttons-container">
               <Link to="/roleselect" className="btn-signup">
