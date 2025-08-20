@@ -106,7 +106,6 @@ io.on('connection', async (socket) => {
   const recipientId = socket.handshake.query.recipientId ? String(socket.handshake.query.recipientId) : null;
   console.log(`[IO] connected socket=${socket.id} user=${userId} recipient=${recipientId || '-'}`);
 
-  // If recipient provided, join a private chat room
   if (recipientId) {
     const chatRoomId = [userId, recipientId].sort().join('_');
     socket.join(chatRoomId);
@@ -115,7 +114,6 @@ io.on('connection', async (socket) => {
   if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
   connectedUsers.get(userId).add(socket.id);
 
-  // Update online status for the user
   if (connectedUsers.get(userId).size === 1) {
     try {
       await User.findByIdAndUpdate(userId, { isOnline: true });
@@ -192,8 +190,6 @@ io.on('connection', async (socket) => {
     }
   });
 
-  // --- Video call flow ---------------------------------------------------
-
   socket.on('video_call_request', ({ callerId, recipientId, roomId }, cb) => {
     try {
       const cid = String(callerId);
@@ -217,18 +213,15 @@ io.on('connection', async (socket) => {
   socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
     try {
       console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
-      // Callee joins the room
       socket.join(roomId);
       if (!rooms.has(roomId)) rooms.set(roomId, new Set());
       rooms.get(roomId).add(socket.id);
 
-      // Ensure the caller joins the room
       const callerSocket = io.sockets.sockets.get(callerSocketId);
       if (callerSocket) {
         callerSocket.join(roomId);
         rooms.get(roomId).add(callerSocketId);
       }
-      // Notify caller that the call is accepted and to join the room
       io.to(callerSocketId).emit('video_call_accepted', { roomId });
     } catch (err) {
       console.error('video_call_accept error:', err);

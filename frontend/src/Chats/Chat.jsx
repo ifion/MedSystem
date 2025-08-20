@@ -172,7 +172,7 @@ const Chat = () => {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [file, setFile] = useState(null);
- const [recipient, setRecipient] = useState(null);
+  const [recipient, setRecipient] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [replyTo, setReplyTo] = useState(null);
@@ -191,6 +191,7 @@ const Chat = () => {
   const [incomingCall, setIncomingCall] = useState(false);
   const [caller, setCaller] = useState(null);
   const [callRoomId, setCallRoomId] = useState(null);
+  const [callerSocketId, setCallerSocketId] = useState(null);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -313,11 +314,12 @@ const Chat = () => {
     socket.current.on('userTyping', () => setIsTyping(true));
     socket.current.on('userStoppedTyping', () => setIsTyping(false));
 
-    socket.current.on('incoming_video_call', ({ callerId, roomId }) => {
+    socket.current.on('incoming_video_call', ({ callerId, callerSocketId, roomId }) => {
       if (callerId === userId) {
         setIncomingCall(true);
         setCaller(callerId);
         setCallRoomId(roomId);
+        setCallerSocketId(callerSocketId);
       }
     });
 
@@ -351,12 +353,12 @@ const Chat = () => {
   }, [userId, apiUrl]);
 
   const handleAccept = () => {
-    navigate(`/video-call/${caller}?type=accept&roomId=${callRoomId}`);
+    navigate(`/video-call/${caller}?type=accept&roomId=${callRoomId}&callerSocketId=${callerSocketId}`);
     setIncomingCall(false);
   };
 
   const handleReject = () => {
-    socket.current.emit('video_call_reject', { callerId: caller });
+    socket.current.emit('video_call_reject', { callerSocketId: callerSocketId });
     setIncomingCall(false);
   };
 
