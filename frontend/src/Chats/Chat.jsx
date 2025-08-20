@@ -181,7 +181,6 @@ const Chat = () => {
   const [selectedMessageForActions, setSelectedMessageForActions] = useState(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showImageEditor, setShowImageEditor] = useState(false);
-  const [showImageOptions, setShowImageOptions] = useState(false);
   const [disappearTime, setDisappearTime] = useState(0);
   const [showDisappearModal, setShowDisappearModal] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -367,23 +366,11 @@ const handleFileSelect = (event) => {
     if (selected) {
       if (selected.type.startsWith('image/')) {
         setSelectedImage(URL.createObjectURL(selected));
-        setShowImageOptions(true);
+        setShowImageEditor(true);
       } else {
         setFile(selected);
       }
     }
-  };
-
-  const handleSendImageDirectly = () => {
-    const selectedFile = fileInputRef.current.files[0];
-    setFile(selectedFile);
-    setShowImageOptions(false);
-    setSelectedImage(null);
-  };
-
-  const handleEditImage = () => {
-    setShowImageEditor(true);
-    setShowImageOptions(false);
   };
 
   const handleImageSave = (editedFile) => {
@@ -393,7 +380,6 @@ const handleFileSelect = (event) => {
   };
 
   const handleImageCancel = () => {
-    setShowImageOptions(false);
     setShowImageEditor(false);
     setSelectedImage(null);
   };
@@ -782,7 +768,7 @@ const handleFileSelect = (event) => {
         )}
       </footer>
 
-      {selectedImage && !showImageOptions && !showImageEditor && (
+      {selectedImage && !showImageEditor && (
         <div className="image-modal" onClick={closeImageModal}>
           <div className="image-modal-content">
             <img src={selectedImage} alt="Expanded view" />
@@ -839,23 +825,6 @@ const handleFileSelect = (event) => {
               aria-label="Copy"
             >
               ⎘ Copy
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showImageOptions && (
-        <div className="popup-backdrop" onClick={handleImageCancel}>
-          <div className="message-actions-popup" onClick={(e) => e.stopPropagation()}>
-            <p>Would you like to:</p>
-            <button className="action-button" onClick={handleSendImageDirectly}>
-              Send Image Directly
-            </button>
-            <button className="action-button" onClick={handleEditImage}>
-              Edit Image First
-            </button>
-            <button className="action-button" onClick={handleImageCancel}>
-              Cancel
             </button>
           </div>
         </div>
