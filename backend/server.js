@@ -216,17 +216,29 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
-    try {
-      console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
-      socket.join(roomId);
-      if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-      rooms.get(roomId).add(socket.id);
-      // notify caller to join + start establishing peers
-      io.to(callerSocketId).emit('video_call_accepted', { roomId });
-    } catch (err) {
-      console.error('video_call_accept error:', err);
+  try {
+    console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
+
+    // Ensure callee joins
+    socket.join(roomId);
+    if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+    rooms.get(roomId).add(socket.id);
+
+    // Ensure caller joins
+    const callerSocket = io.sockets.sockets.get(callerSocketId);
+    if (callerSocket) {
+      callerSocket.join(roomId);
+      rooms.get(roomId).add(callerSocketId);
     }
-  });
+
+    // ✅ Tell caller that callee accepted and what room to join
+    io.to(callerSocketId).emit('video_call_accepted', { roomId });
+  } catch (err) {
+    console.error('video_call_accept error:', err);
+  }
+});
+
+
 
   socket.on('video_call_reject', ({ callerSocketId }) => {
     try {

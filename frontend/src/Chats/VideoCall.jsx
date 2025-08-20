@@ -380,21 +380,10 @@ const VideoCall = () => {
     }
     const peer = new Peer({
       initiator: true,
-      trickle: true,
+      trickle: false,
       config: configuration,
       stream,
     });
-
-    peer._pc.oniceconnectionstatechange = function () {
-      const state = this.iceConnectionState;
-      console.log('ICE state change:', state);
-      if (['disconnected', 'failed', 'closed'].includes(state)) {
-        if (mounted.current) {
-          setError(`Connection ${state}.`);
-          if (inCallRef.current) cleanUpCall(false, true);
-        }
-      }
-    };
 
     peer.on('signal', (signal) => {
       if (mounted.current && socket.current) {
@@ -434,21 +423,10 @@ const VideoCall = () => {
     }
     const peer = new Peer({
       initiator: false,
-      trickle: true,
+      trickle: false,
       config: configuration,
       stream,
     });
-
-    peer._pc.oniceconnectionstatechange = function () {
-      const state = this.iceConnectionState;
-      console.log('ICE state change:', state);
-      if (['disconnected', 'failed', 'closed'].includes(state)) {
-        if (mounted.current) {
-          setError(`Connection ${state}.`);
-          if (inCallRef.current) cleanUpCall(false, true);
-        }
-      }
-    };
 
     peer.on('signal', (signal) => {
       if (mounted.current && socket.current) {
@@ -524,41 +502,43 @@ const VideoCall = () => {
     }
   };
 
-  // Accept an incoming call (callee)
-  const acceptVideoCall = async () => {
-    if (inCall || !incomingCall) {
-      console.warn('Already in call or no incoming call');
-      return;
-    }
-    try {
-      // Acquire media
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
-      localStreamRef.current = stream;
-      setInCall(true);
-      inCallRef.current = true;
-      setCallRoomId(incomingCall.roomId);
-      callRoomIdRef.current = incomingCall.roomId;
-      setRinging(false);
-      setIncomingCall(null);
-      clearTimeout(incomingTimeoutRef.current);
+// Accept an incoming call (callee)
+const acceptVideoCall = async () => {
+  if (inCall || !incomingCall) {
+    console.warn('Already in call or no incoming call');
+    return;
+  }
+  try {
+    // Acquire media
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    setLocalStream(stream);
+    localStreamRef.current = stream;
+    setInCall(true);
+    inCallRef.current = true;
+    setCallRoomId(incomingCall.roomId);
+    callRoomIdRef.current = incomingCall.roomId;
+    setRinging(false);
+    setIncomingCall(null);
+    clearTimeout(incomingTimeoutRef.current);
 
-      // notify caller
-      if (socket.current) {
-        socket.current.emit('video_call_accept', {
-          callerSocketId: incomingCall.callerSocketId,
-          roomId: incomingCall.roomId,
-        });
-      }
-      // join video room (server will send all_users)
-      joinVideoRoom(callRoomIdRef.current);
-      startCallTimer();
-    } catch (err) {
-      console.error('Media device error:', err);
-      setError('Failed to access camera/microphone. Check permissions.');
-      cleanUpCall(true, true);
+    // ✅ Tell server "I accept", server will put both caller+callee into the same room
+    if (socket.current) {
+      socket.current.emit('video_call_accept', {
+        callerSocketId: incomingCall.callerSocketId,
+        roomId: incomingCall.roomId,
+      });
     }
-  };
+
+    // ✅ Join video room (server will now return all_users containing caller+callee)
+    joinVideoRoom(callRoomIdRef.current);
+
+    startCallTimer();
+  } catch (err) {
+    console.error('Media device error:', err);
+    setError('Failed to access camera/microphone. Check permissions.');
+    cleanUpCall(true, true);
+  }
+};
 
   const rejectVideoCall = () => {
     if (socket.current && incomingCall) {
