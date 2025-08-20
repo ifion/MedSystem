@@ -356,10 +356,6 @@ const Chat = () => {
     setIncomingCall(false);
   };
 
-  const handleReject = () => {
-    socket.current.emit('video_call_reject', { callerSocketId: callerSocketId });
-    setIncomingCall(false);
-  };
 
 const handleFileSelect = (event) => {
     const selected = event.target.files[0];
@@ -675,9 +671,13 @@ const handleFileSelect = (event) => {
       </main>
 
       {incomingCall && (
-        <div className="incoming-call-popup">
+        <div className="incoming-call-popup" onClick={handleAccept} style={{
+          cursor: 'pointer',
+          backgroundColor: 'beige',
+          padding: '10px',
+          justifySelf: 'center',
+        }}>
           <p>Incoming call from {recipient?.name}</p>
-          <button onClick={handleAccept}>Check</button>
         </div>
       )}
 
