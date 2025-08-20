@@ -63,7 +63,6 @@ const connectDB = async () => {
   });
 };
 
-// Connect to MongoDB
 connectDB();
 
 // Express Middleware
@@ -107,7 +106,7 @@ io.on('connection', async (socket) => {
   const recipientId = socket.handshake.query.recipientId ? String(socket.handshake.query.recipientId) : null;
   console.log(`[IO] connected socket=${socket.id} user=${userId} recipient=${recipientId || '-'}`);
 
-  // If they connected with a recipient param, join the private chat room (optional)
+  // If recipient provided, join a private chat room
   if (recipientId) {
     const chatRoomId = [userId, recipientId].sort().join('_');
     socket.join(chatRoomId);
@@ -116,7 +115,7 @@ io.on('connection', async (socket) => {
   if (!connectedUsers.has(userId)) connectedUsers.set(userId, new Set());
   connectedUsers.get(userId).add(socket.id);
 
-  // update online status once per-user when they first connect
+  // Update online status for the user
   if (connectedUsers.get(userId).size === 1) {
     try {
       await User.findByIdAndUpdate(userId, { isOnline: true });
@@ -216,29 +215,25 @@ io.on('connection', async (socket) => {
   });
 
   socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
-  try {
-    console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
+    try {
+      console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
+      // Callee joins the room
+      socket.join(roomId);
+      if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+      rooms.get(roomId).add(socket.id);
 
-    // Ensure callee joins
-    socket.join(roomId);
-    if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-    rooms.get(roomId).add(socket.id);
-
-    // Ensure caller joins
-    const callerSocket = io.sockets.sockets.get(callerSocketId);
-    if (callerSocket) {
-      callerSocket.join(roomId);
-      rooms.get(roomId).add(callerSocketId);
+      // Ensure the caller joins the room
+      const callerSocket = io.sockets.sockets.get(callerSocketId);
+      if (callerSocket) {
+        callerSocket.join(roomId);
+        rooms.get(roomId).add(callerSocketId);
+      }
+      // Notify caller that the call is accepted and to join the room
+      io.to(callerSocketId).emit('video_call_accepted', { roomId });
+    } catch (err) {
+      console.error('video_call_accept error:', err);
     }
-
-    // ✅ Tell caller that callee accepted and what room to join
-    io.to(callerSocketId).emit('video_call_accepted', { roomId });
-  } catch (err) {
-    console.error('video_call_accept error:', err);
-  }
-});
-
-
+  });
 
   socket.on('video_call_reject', ({ callerSocketId }) => {
     try {
@@ -269,7 +264,6 @@ io.on('connection', async (socket) => {
       const set = rooms.get(roomId);
       set.add(socket.id);
       const others = Array.from(set).filter((id) => id !== socket.id);
-      // send the list of other socket ids in the room so client can create peers
       socket.emit('all_users', others);
     } catch (err) {
       console.error('join_video_room error:', err);
@@ -278,7 +272,6 @@ io.on('connection', async (socket) => {
 
   socket.on('sending_signal', ({ userToSignal, signal }) => {
     try {
-      // userToSignal should be a socket id (from join_video_room/all_users)
       if (userToSignal) {
         io.to(userToSignal).emit('user_joined', { signal, callerId: socket.id });
       }
@@ -302,14 +295,12 @@ io.on('connection', async (socket) => {
       if (!roomId) return;
       console.log(`[CALL] end ${roomId}`);
       io.in(roomId).emit('call_ended');
-      // cleanup room state
       rooms.delete(roomId);
     } catch (err) {
       console.error('end_call error:', err);
     }
   });
 
-  // graceful disconnect
   socket.on('disconnect', async () => {
     try {
       console.log(`[IO] disconnected socket=${socket.id} user=${userId}`);
@@ -327,7 +318,6 @@ io.on('connection', async (socket) => {
         }
       }
 
-      // remove socket from any rooms and notify participants
       rooms.forEach((value, key) => {
         if (value.has(socket.id)) {
           value.delete(socket.id);
@@ -344,10 +334,8 @@ io.on('connection', async (socket) => {
   });
 });
 
-// Initialize default users
 initializeUsers().catch((err) => console.error('User initialization failed:', err));
 
-// Start Server
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);

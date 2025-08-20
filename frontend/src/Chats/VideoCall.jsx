@@ -213,11 +213,6 @@ const VideoCall = () => {
         // Clear prior incoming timeout and set new 60s timeout to auto-dismiss incoming UI
         clearTimeout(incomingTimeoutRef.current);
         incomingTimeoutRef.current = setTimeout(() => {
-          // auto-dismiss incoming call UI after 60s (client-side). Notify caller that call was not accepted.
-          if (mounted.current && incomingCall == null) {
-            // nothing
-          }
-          // if still ringing, reject the call (server will notify caller)
           if (ringing && socket.current) {
             socket.current.emit('video_call_reject', { callerSocketId });
           }
@@ -226,7 +221,7 @@ const VideoCall = () => {
         }, 60000);
       });
 
-      // caller receives acceptance from callee
+      // caller receives acceptance from callee; both now join same room
       socket.current.on('video_call_accepted', ({ roomId }) => {
         if (!mounted.current) return;
         clearTimeout(callTimeoutRef.current);
@@ -244,14 +239,12 @@ const VideoCall = () => {
         if (!mounted.current) return;
         clearTimeout(callTimeoutRef.current);
         setError('Call rejected by the other user.');
-        // server-origin: don't re-emit
         cleanUpCall(true, false);
       });
 
       socket.current.on('video_call_canceled', () => {
         if (!mounted.current) return;
         setError('Call canceled by the caller.');
-        // server-origin: don't re-emit
         cleanUpCall(true, false);
       });
 
@@ -301,7 +294,6 @@ const VideoCall = () => {
       socket.current.on('call_ended', () => {
         if (!mounted.current) return;
         setError('Call ended by the other user.');
-        // server-origin: don't re-emit
         cleanUpCall(true, false);
       });
 
@@ -313,7 +305,6 @@ const VideoCall = () => {
         }
         peersRef.current = peersRef.current.filter((p) => p.peerId !== id);
         setPeers((prev) => prev.filter((p) => p.peerId !== id));
-        // if the other user left and there are no peers, end locally (server-origin)
         if (peersRef.current.length === 0) {
           setError('Other user left the call.');
           cleanUpCall(true, false);
@@ -321,9 +312,7 @@ const VideoCall = () => {
       });
     }
 
-    // Cleanup on unmount
     const handleBeforeUnload = () => {
-      // do not emit to server when unloading: server will detect socket disconnect
       cleanUpCall(false, false);
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -331,7 +320,7 @@ const VideoCall = () => {
     return () => {
       mounted.current = false;
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      cleanUpCall(false, false); // don't emit when unmounting
+      cleanUpCall(false, false);
       if (socket.current) {
         socket.current.off('connect');
         socket.current.off('connect_error');
@@ -360,14 +349,14 @@ const VideoCall = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
 
-  // Attach local stream to local video element when available
+  // Attach local stream to video element when available
   useEffect(() => {
     if (localStream && localVideoRef.current) {
       try {
         localVideoRef.current.srcObject = localStream;
         localStreamRef.current = localStream;
       } catch (e) {
-        console.error('Error attaching local stream to video element:', e);
+        console.error('Error attaching local stream:', e);
       }
     }
   }, [localStream]);
@@ -469,7 +458,6 @@ const VideoCall = () => {
       return;
     }
     try {
-      // Acquire media
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setLocalStream(stream);
       localStreamRef.current = stream;
@@ -481,17 +469,14 @@ const VideoCall = () => {
       isCallingRef.current = true;
       setError(null);
 
-      // request call
       if (socket.current) {
         socket.current.emit('video_call_request', { callerId: currentUserId, recipientId, roomId });
       }
 
-      // 60-second ring timeout for caller
       clearTimeout(callTimeoutRef.current);
       callTimeoutRef.current = setTimeout(() => {
         if (mounted.current && isCallingRef.current && !inCallRef.current) {
           setError('Call timed out after 60 seconds.');
-          // navigateOnEnd = true, emitToServer = true (let server know)
           cleanUpCall(true, true);
         }
       }, 60000);
@@ -502,51 +487,48 @@ const VideoCall = () => {
     }
   };
 
-// Accept an incoming call (callee)
-const acceptVideoCall = async () => {
-  if (inCall || !incomingCall) {
-    console.warn('Already in call or no incoming call');
-    return;
-  }
-  try {
-    // Acquire media
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    setLocalStream(stream);
-    localStreamRef.current = stream;
-    setInCall(true);
-    inCallRef.current = true;
-    setCallRoomId(incomingCall.roomId);
-    callRoomIdRef.current = incomingCall.roomId;
-    setRinging(false);
-    setIncomingCall(null);
-    clearTimeout(incomingTimeoutRef.current);
-
-    // ✅ Tell server "I accept", server will put both caller+callee into the same room
-    if (socket.current) {
-      socket.current.emit('video_call_accept', {
-        callerSocketId: incomingCall.callerSocketId,
-        roomId: incomingCall.roomId,
-      });
+  // Accept an incoming call (callee)
+  const acceptVideoCall = async () => {
+    if (inCall || !incomingCall) {
+      console.warn('Already in call or no incoming call');
+      return;
     }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+      setInCall(true);
+      inCallRef.current = true;
+      setCallRoomId(incomingCall.roomId);
+      callRoomIdRef.current = incomingCall.roomId;
+      setRinging(false);
+      setIncomingCall(null);
+      clearTimeout(incomingTimeoutRef.current);
 
-    // ✅ Join video room (server will now return all_users containing caller+callee)
-    joinVideoRoom(callRoomIdRef.current);
+      // Tell the server that the call is accepted
+      if (socket.current) {
+        socket.current.emit('video_call_accept', {
+          callerSocketId: incomingCall.callerSocketId,
+          roomId: incomingCall.roomId,
+        });
+      }
 
-    startCallTimer();
-  } catch (err) {
-    console.error('Media device error:', err);
-    setError('Failed to access camera/microphone. Check permissions.');
-    cleanUpCall(true, true);
-  }
-};
+      // Join the room so that both caller and callee are in the same room
+      joinVideoRoom(callRoomIdRef.current);
+      startCallTimer();
+    } catch (err) {
+      console.error('Media device error:', err);
+      setError('Failed to access camera/microphone. Check permissions.');
+      cleanUpCall(true, true);
+    }
+  };
 
+  // Reject an incoming call (callee) or cancel outgoing call. Now cleans up media on both ends.
   const rejectVideoCall = () => {
     if (socket.current && incomingCall) {
       socket.current.emit('video_call_reject', { callerSocketId: incomingCall.callerSocketId });
-      setIncomingCall(null);
-      setRinging(false);
-      clearTimeout(incomingTimeoutRef.current);
     }
+    cleanUpCall(true, true);
   };
 
   const joinVideoRoom = (roomId) => {
@@ -578,11 +560,9 @@ const acceptVideoCall = async () => {
   };
 
   const endCall = () => {
-    // this is a local initiated end — navigate after cleaning, and notify server
     cleanUpCall(true, true);
   };
 
-  // UI
   return (
     <div className="video-call-window">
       {error && <div className="error-message">{error}</div>}
@@ -595,11 +575,7 @@ const acceptVideoCall = async () => {
         </div>
       )}
 
-      {inCall && (
-        <div className="call-duration">
-          Duration: {formatDuration(callDuration)}
-        </div>
-      )}
+      {inCall && <div className="call-duration">Duration: {formatDuration(callDuration)}</div>}
 
       {isCalling && !inCall && (
         <div className="ringing">
