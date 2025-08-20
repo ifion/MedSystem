@@ -677,8 +677,7 @@ const handleFileSelect = (event) => {
       {incomingCall && (
         <div className="incoming-call-popup">
           <p>Incoming call from {recipient?.name}</p>
-          <button onClick={handleAccept}>Accept</button>
-          <button onClick={handleReject}>Reject</button>
+          <button onClick={handleAccept}>Check</button>
         </div>
       )}
 
