@@ -23,7 +23,7 @@ function RoleSelection() {
         </div>
         <p className="role-footer">
           Already have an account?{' '}
-          <Link to="/" className="link-primary">Login</Link>
+          <Link to="/login" className="link-primary">Login</Link>
         </p>
       </div>
     </div>
