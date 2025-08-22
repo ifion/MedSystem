@@ -1,3 +1,4 @@
+// server.js (unchanged except for minor logging improvements if needed, but as per instruction, without changing current configuration)
 require('dotenv').config();
 const express = require('express');
 const http = require('http');

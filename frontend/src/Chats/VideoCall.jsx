@@ -1,3 +1,4 @@
+// VideoCall.jsx (updated with improvements)
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -27,6 +28,11 @@ const VideoCall = () => {
   const [callDuration, setCallDuration] = useState(0);
   const [incomingCall, setIncomingCall] = useState(null);
   const [ringing, setRinging] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [videoQuality, setVideoQuality] = useState('medium'); // low, medium, high
+  const [cameras, setCameras] = useState([]);
+  const [currentCamera, setCurrentCamera] = useState('user'); // 'user' or 'environment'
+  const [isFullScreen, setIsFullScreen] = useState(false);
 
   // refs
   const socket = useRef(null);
@@ -41,6 +47,39 @@ const VideoCall = () => {
   const isCallingRef = useRef(false);
   const inCallRef = useRef(false);
   const callRoomIdRef = useRef(null);
+  const videoContainerRef = useRef(null);
+  const originalVideoTrackRef = useRef(null);
+
+  const getConstraints = () => {
+    let videoConstraints = {
+      facingMode: currentCamera,
+    };
+    switch (videoQuality) {
+      case 'low':
+        videoConstraints.width = { ideal: 320 };
+        videoConstraints.height = { ideal: 240 };
+        videoConstraints.frameRate = { ideal: 15 };
+        break;
+      case 'high':
+        videoConstraints.width = { ideal: 1920 };
+        videoConstraints.height = { ideal: 1080 };
+        videoConstraints.frameRate = { ideal: 60 };
+        break;
+      default: // medium
+        videoConstraints.width = { ideal: 1280 };
+        videoConstraints.height = { ideal: 720 };
+        videoConstraints.frameRate = { ideal: 30 };
+        break;
+    }
+    return {
+      video: videoConstraints,
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    };
+  };
 
   const configuration = {
     iceServers: [
@@ -71,6 +110,17 @@ const VideoCall = () => {
       },
     ],
     iceCandidatePoolSize: 10,
+    sdpSemantics: 'unified-plan',
+    offerOptions: {
+      offerToReceiveAudio: true,
+      offerToReceiveVideo: true,
+    },
+    sdpTransform: (sdp) => {
+      // Increase bandwidth for better quality
+      let newSdp = sdp.replace(/b=AS:30/g, 'b=AS:2000'); // For video
+      newSdp = newSdp.replace(/b=AS:50/g, 'b=AS:2000'); // Adjust as needed
+      return newSdp;
+    },
   };
 
   const formatDuration = (seconds) => {
@@ -153,6 +203,8 @@ const VideoCall = () => {
     setError(null);
     setIncomingCall(null);
     setRinging(false);
+    setIsScreenSharing(false);
+    setIsFullScreen(false);
 
     isCallingRef.current = false;
     inCallRef.current = false;
@@ -187,7 +239,6 @@ const VideoCall = () => {
       if (mounted.current && socket.current) {
         socket.current.emit('sending_signal', {
           userToSignal: userToSignalSocketId,
-          callerId: callerSocketId,
           signal,
         });
       }
@@ -260,13 +311,27 @@ const VideoCall = () => {
     return peer;
   };
 
+  const getMediaStream = async () => {
+    try {
+      const constraints = getConstraints();
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (stream.getVideoTracks().length > 0) {
+        originalVideoTrackRef.current = stream.getVideoTracks()[0];
+      }
+      return stream;
+    } catch (err) {
+      console.error('Media device error:', err);
+      throw err;
+    }
+  };
+
   const startVideoCall = async () => {
     if (isCalling || inCall) {
       console.warn('Call already in progress or initiated');
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await getMediaStream();
       setLocalStream(stream);
       localStreamRef.current = stream;
 
@@ -289,7 +354,6 @@ const VideoCall = () => {
         }
       }, 60000);
     } catch (err) {
-      console.error('Media device error:', err);
       setError('Failed to access camera/microphone. Check permissions.');
       cleanUpCall(true, true);
     }
@@ -301,7 +365,7 @@ const VideoCall = () => {
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await getMediaStream();
       setLocalStream(stream);
       localStreamRef.current = stream;
       setInCall(true);
@@ -320,7 +384,6 @@ const VideoCall = () => {
       }
       startCallTimer();
     } catch (err) {
-      console.error('Media device error:', err);
       setError('Failed to access camera/microphone. Check permissions.');
       cleanUpCall(true, true);
     }
@@ -353,7 +416,93 @@ const VideoCall = () => {
     }
   };
 
-  const switchCamera = () => {
+  const switchCamera = async () => {
+    const newFacingMode = currentCamera === 'user' ? 'environment' : 'user';
+    setCurrentCamera(newFacingMode);
+    if (localStreamRef.current) {
+      stopStreamTracks(localStreamRef.current);
+    }
+    try {
+      const stream = await getMediaStream();
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+      originalVideoTrackRef.current = stream.getVideoTracks()[0];
+
+      // Replace track in peer
+      if (peersRef.current.length > 0) {
+        const sender = peersRef.current[0].peer.getSenders().find((s) => s.track.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(stream.getVideoTracks()[0]);
+        }
+      }
+    } catch (err) {
+      setError('Failed to switch camera.');
+    }
+  };
+
+  const toggleScreenSharing = async () => {
+    if (isScreenSharing) {
+      // Stop sharing, go back to camera
+      if (localStreamRef.current) {
+        const screenTrack = localStreamRef.current.getVideoTracks()[0];
+        screenTrack.stop();
+      }
+      try {
+        const cameraStream = await getMediaStream();
+        const cameraTrack = cameraStream.getVideoTracks()[0];
+        setLocalStream(cameraStream);
+        localStreamRef.current = cameraStream;
+        originalVideoTrackRef.current = cameraTrack;
+
+        // Replace track in peer
+        if (peersRef.current.length > 0) {
+          const sender = peersRef.current[0].peer.getSenders().find((s) => s.track.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(cameraTrack);
+          }
+        }
+        setIsScreenSharing(false);
+      } catch (err) {
+        setError('Failed to switch back to camera.');
+      }
+    } else {
+      // Start sharing
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = screenStream.getVideoTracks()[0];
+        screenTrack.onended = () => toggleScreenSharing(); // Auto stop when share ends
+        setLocalStream(screenStream);
+        localStreamRef.current = screenStream;
+
+        // Replace track in peer
+        if (peersRef.current.length > 0) {
+          const sender = peersRef.current[0].peer.getSenders().find((s) => s.track.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(screenTrack);
+          }
+        }
+        setIsScreenSharing(true);
+      } catch (err) {
+        setError('Failed to start screen sharing.');
+      }
+    }
+  };
+
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      videoContainerRef.current.requestFullscreen().then(() => setIsFullScreen(true));
+    } else {
+      document.exitFullscreen().then(() => setIsFullScreen(false));
+    }
+  };
+
+  const changeVideoQuality = (quality) => {
+    setVideoQuality(quality);
+    // Restart stream with new quality
+    switchCamera(); // Reuse to restart
+  };
+
+  const switchView = () => {
     setActiveVideo((prev) => (prev === 'remote' ? 'local' : 'remote'));
   };
 
@@ -363,6 +512,12 @@ const VideoCall = () => {
 
   useEffect(() => {
     mounted.current = true;
+
+    // Get available cameras
+    navigator.mediaDevices.enumerateDevices().then((devices) => {
+      const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+      setCameras(videoDevices);
+    });
 
     if (!socket.current) {
       socket.current = io(apiUrl, {
@@ -416,7 +571,6 @@ const VideoCall = () => {
         inCallRef.current = true;
         setCallRoomId(roomId);
         callRoomIdRef.current = roomId;
-        // Corrected: Initiator creates the peer and sends the initial signal
         if (localStreamRef.current) {
           const peer = createPeer(recipientSocketId, socket.current.id, localStreamRef.current);
           if (peer) {
@@ -425,6 +579,10 @@ const VideoCall = () => {
           }
         }
         startCallTimer();
+      });
+
+      socket.current.on('call_ready', ({ roomId, callerSocketId }) => {
+        // Can use if needed, but currently not necessary
       });
 
       socket.current.on('video_call_rejected', () => {
@@ -439,9 +597,7 @@ const VideoCall = () => {
         setError('Call canceled by the caller.');
         cleanUpCall(true, false);
       });
-      
-      // Corrected: This event now handles the incoming signal from the initiator
-      // This listener is now for the recipient only.
+
       socket.current.on('user_joined', ({ signal, callerId }) => {
         if (!mounted.current || !localStreamRef.current) return;
         const exists = peersRef.current.find((p) => p.peerId === callerId);
@@ -453,9 +609,7 @@ const VideoCall = () => {
           }
         }
       });
-      
-      // The `all_users` event is no longer necessary with the new signaling flow.
-      // It's a relic of an old logic that was causing problems.
+
       socket.current.on('receiving_returned_signal', ({ signal, id }) => {
         if (!mounted.current) return;
         const item = peersRef.current.find((p) => p.peerId === id);
@@ -523,8 +677,6 @@ const VideoCall = () => {
       startVideoCall();
     } else if (type === 'accept' && !inCall && !incomingCall) {
       setIncomingCall({ callerId: recipientId, callerSocketId: callerSocketIdParam, roomId: roomIdParam });
-      // The accept logic now happens within the component state and handlers
-      // No direct call to acceptVideoCall here
     }
   }, [type, isCalling, inCall, incomingCall, roomIdParam, callerSocketIdParam, recipientId]);
 
@@ -565,13 +717,13 @@ const VideoCall = () => {
       )}
 
       {(isCalling || inCall) && (
-        <div className="video-container">
+        <div className="video-container" ref={videoContainerRef}>
           <video
             ref={remoteVideoRef}
             autoPlay
             playsInline
             className={inCall && activeVideo === 'remote' ? 'maximized' : 'hidden'}
-            onClick={switchCamera}
+            onClick={switchView}
           />
           <video
             ref={localVideoRef}
@@ -579,7 +731,7 @@ const VideoCall = () => {
             playsInline
             muted
             className={(isCalling || inCall) && activeVideo === 'local' ? 'maximized' : 'minimized'}
-            onClick={switchCamera}
+            onClick={switchView}
           />
         </div>
       )}
@@ -588,6 +740,14 @@ const VideoCall = () => {
         <div className="call-controls">
           <button onClick={toggleAudioMute}>{isAudioMuted ? 'Unmute' : 'Mute'}</button>
           <button onClick={toggleVideo}>{isVideoEnabled ? 'Video Off' : 'Video On'}</button>
+          <button onClick={switchCamera}>Switch Camera</button>
+          <button onClick={toggleScreenSharing}>{isScreenSharing ? 'Stop Sharing' : 'Share Screen'}</button>
+          <button onClick={toggleFullScreen}>{isFullScreen ? 'Exit Fullscreen' : 'Fullscreen'}</button>
+          <select value={videoQuality} onChange={(e) => changeVideoQuality(e.target.value)}>
+            <option value="low">Low Quality</option>
+            <option value="medium">Medium Quality</option>
+            <option value="high">High Quality</option>
+          </select>
           <button onClick={endCall}>End Call</button>
         </div>
       )}
