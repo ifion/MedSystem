@@ -43,22 +43,35 @@ const VideoCall = () => {
   const callRoomIdRef = useRef(null);
 
   const configuration = {
-  iceServers: [],  // Populated dynamically below
-  iceCandidatePoolSize: 10,
-};
-
-// Fetch and populate
-(async () => {
-  const response = await fetch("https://medsystem.metered.live/api/v1/turn/credentials?apiKey=069743aabe03a1b03ffa7b7bd30224c9d141");
-  const iceServers = await response.json();
-  configuration.iceServers = [
+  iceServers: [
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    ...iceServers,
-  ];
-})();
-
-// Example usage: new RTCPeerConnection(configuration);
+    {
+      urls: "stun:stun.relay.metered.ca:80",
+    },
+    {
+      urls: "turn:standard.relay.metered.ca:80",
+      username: "3d1a139e6497e7e4cbaaba10",
+      credential: "X6SnS8201JnFZ5jX",
+    },
+    {
+      urls: "turn:standard.relay.metered.ca:80?transport=tcp",
+      username: "3d1a139e6497e7e4cbaaba10",
+      credential: "X6SnS8201JnFZ5jX",
+    },
+    {
+      urls: "turn:standard.relay.metered.ca:443",
+      username: "3d1a139e6497e7e4cbaaba10",
+      credential: "X6SnS8201JnFZ5jX",
+    },
+    {
+      urls: "turns:standard.relay.metered.ca:443?transport=tcp",
+      username: "3d1a139e6497e7e4cbaaba10",
+      credential: "X6SnS8201JnFZ5jX",
+    },
+  ],
+  iceCandidatePoolSize: 10,
+};
 
   const formatDuration = (seconds) => {
     const m = Math.floor(seconds / 60);
