@@ -213,16 +213,19 @@ io.on('connection', async (socket) => {
   socket.on('video_call_accept', ({ callerSocketId, roomId }) => {
     try {
       console.log(`[CALL] accept room=${roomId} notify callerSocketId=${callerSocketId}`);
-      socket.join(roomId);
-      if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-      rooms.get(roomId).add(socket.id);
-
+      // Join both sockets to the room
       const callerSocket = io.sockets.sockets.get(callerSocketId);
       if (callerSocket) {
         callerSocket.join(roomId);
+        socket.join(roomId);
+        // Store the room state
+        if (!rooms.has(roomId)) rooms.set(roomId, new Set());
+        rooms.get(roomId).add(socket.id);
         rooms.get(roomId).add(callerSocketId);
+        // Notify both users that the call is ready, providing the other's socket ID
+        io.to(callerSocketId).emit('video_call_accepted', { roomId, recipientSocketId: socket.id });
+        io.to(socket.id).emit('call_ready', { roomId, callerSocketId });
       }
-      io.to(callerSocketId).emit('video_call_accepted', { roomId });
     } catch (err) {
       console.error('video_call_accept error:', err);
     }
@@ -248,24 +251,13 @@ io.on('connection', async (socket) => {
     }
   });
 
-  socket.on('join_video_room', (roomId) => {
-    try {
-      if (!roomId) return;
-      console.log(`[ROOM] ${socket.id} join ${roomId}`);
-      socket.join(roomId);
-      if (!rooms.has(roomId)) rooms.set(roomId, new Set());
-      const set = rooms.get(roomId);
-      set.add(socket.id);
-      const others = Array.from(set).filter((id) => id !== socket.id);
-      socket.emit('all_users', others);
-    } catch (err) {
-      console.error('join_video_room error:', err);
-    }
-  });
+  // This event is no longer used in the new flow
+  // socket.on('join_video_room', ...)
 
   socket.on('sending_signal', ({ userToSignal, signal }) => {
     try {
       if (userToSignal) {
+        // The signal from initiator is sent here to the recipient
         io.to(userToSignal).emit('user_joined', { signal, callerId: socket.id });
       }
     } catch (err) {
@@ -276,6 +268,7 @@ io.on('connection', async (socket) => {
   socket.on('returning_signal', ({ signal, callerId }) => {
     try {
       if (callerId) {
+        // The signal from recipient is returned here to the initiator
         io.to(callerId).emit('receiving_returned_signal', { signal, id: socket.id });
       }
     } catch (err) {

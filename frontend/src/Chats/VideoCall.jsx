@@ -43,35 +43,35 @@ const VideoCall = () => {
   const callRoomIdRef = useRef(null);
 
   const configuration = {
-  iceServers: [
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun2.l.google.com:19302' },
-    {
-      urls: "stun:stun.relay.metered.ca:80",
-    },
-    {
-      urls: "turn:standard.relay.metered.ca:80",
-      username: "3d1a139e6497e7e4cbaaba10",
-      credential: "X6SnS8201JnFZ5jX",
-    },
-    {
-      urls: "turn:standard.relay.metered.ca:80?transport=tcp",
-      username: "3d1a139e6497e7e4cbaaba10",
-      credential: "X6SnS8201JnFZ5jX",
-    },
-    {
-      urls: "turn:standard.relay.metered.ca:443",
-      username: "3d1a139e6497e7e4cbaaba10",
-      credential: "X6SnS8201JnFZ5jX",
-    },
-    {
-      urls: "turns:standard.relay.metered.ca:443?transport=tcp",
-      username: "3d1a139e6497e7e4cbaaba10",
-      credential: "X6SnS8201JnFZ5jX",
-    },
-  ],
-  iceCandidatePoolSize: 10,
-};
+    iceServers: [
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      {
+        urls: "stun:stun.relay.metered.ca:80",
+      },
+      {
+        urls: "turn:standard.relay.metered.ca:80",
+        username: "3d1a139e6497e7e4cbaaba10",
+        credential: "X6SnS8201JnFZ5jX",
+      },
+      {
+        urls: "turn:standard.relay.metered.ca:80?transport=tcp",
+        username: "3d1a139e6497e7e4cbaaba10",
+        credential: "X6SnS8201JnFZ5jX",
+      },
+      {
+        urls: "turn:standard.relay.metered.ca:443",
+        username: "3d1a139e6497e7e4cbaaba10",
+        credential: "X6SnS8201JnFZ5jX",
+      },
+      {
+        urls: "turns:standard.relay.metered.ca:443?transport=tcp",
+        username: "3d1a139e6497e7e4cbaaba10",
+        credential: "X6SnS8201JnFZ5jX",
+      },
+    ],
+    iceCandidatePoolSize: 10,
+  };
 
   const formatDuration = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -170,192 +170,6 @@ const VideoCall = () => {
       setCallDuration((prev) => prev + 1);
     }, 1000);
   }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-
-    if (!socket.current) {
-      socket.current = io(apiUrl, {
-        query: { userId: currentUserId, recipientId },
-        transports: ['websocket'],
-        reconnectionAttempts: 5,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-      });
-
-      socket.current.on('connect', () => {
-        console.log('Socket connected:', socket.current.id);
-        setError(null);
-      });
-
-      socket.current.on('connect_error', (err) => {
-        console.error('Socket connect error:', err);
-        setError('Failed to connect to server. Retrying...');
-      });
-
-      socket.current.on('reconnect_attempt', (n) => {
-        console.log('Reconnect attempt', n);
-        setError('Reconnecting to server...');
-      });
-
-      socket.current.on('reconnect_failed', () => {
-        console.error('Reconnect failed');
-        setError('Unable to reconnect to server.');
-      });
-
-      socket.current.on('incoming_video_call', ({ callerId, callerSocketId, roomId }) => {
-        if (!mounted.current) return;
-        setIncomingCall({ callerId, callerSocketId, roomId });
-        setRinging(true);
-
-        clearTimeout(incomingTimeoutRef.current);
-        incomingTimeoutRef.current = setTimeout(() => {
-          if (ringing && socket.current) {
-            socket.current.emit('video_call_reject', { callerSocketId });
-          }
-          setIncomingCall(null);
-          setRinging(false);
-        }, 60000);
-      });
-
-      socket.current.on('video_call_accepted', ({ roomId }) => {
-        if (!mounted.current) return;
-        clearTimeout(callTimeoutRef.current);
-        setIsCalling(false);
-        isCallingRef.current = false;
-        setInCall(true);
-        inCallRef.current = true;
-        setCallRoomId(roomId);
-        callRoomIdRef.current = roomId;
-        joinVideoRoom(roomId);
-        startCallTimer();
-      });
-
-      socket.current.on('video_call_rejected', () => {
-        if (!mounted.current) return;
-        clearTimeout(callTimeoutRef.current);
-        setError('Call rejected by the other user.');
-        cleanUpCall(true, false);
-      });
-
-      socket.current.on('video_call_canceled', () => {
-        if (!mounted.current) return;
-        setError('Call canceled by the caller.');
-        cleanUpCall(true, false);
-      });
-
-      socket.current.on('all_users', (users) => {
-        if (!mounted.current || !localStreamRef.current) return;
-        const newPeers = [];
-        users.forEach((userSocketId) => {
-          if (userSocketId !== socket.current.id) {
-            const exists = peersRef.current.find((p) => p.peerId === userSocketId);
-            if (!exists) {
-              const peer = createPeer(userSocketId, socket.current.id, localStreamRef.current);
-              if (peer) {
-                peersRef.current.push({ peerId: userSocketId, peer });
-                newPeers.push(peer);
-              }
-            }
-          }
-        });
-        if (newPeers.length) setPeers((prev) => [...prev, ...newPeers]);
-      });
-
-      socket.current.on('user_joined', ({ signal, callerId }) => {
-        if (!mounted.current || !localStreamRef.current) return;
-        const exists = peersRef.current.find((p) => p.peerId === callerId);
-        if (!exists) {
-          const peer = addPeer(signal, callerId, localStreamRef.current);
-          if (peer) {
-            peersRef.current.push({ peerId: callerId, peer });
-            setPeers((prev) => [...prev, peer]);
-          }
-        }
-      });
-
-      socket.current.on('receiving_returned_signal', ({ signal, id }) => {
-        if (!mounted.current) return;
-        const item = peersRef.current.find((p) => p.peerId === id);
-        if (item) {
-          try {
-            item.peer.signal(signal);
-          } catch (e) {
-            console.error('Signal error:', e);
-            setError('Failed to establish connection.');
-          }
-        }
-      });
-
-      socket.current.on('call_ended', () => {
-        if (!mounted.current) return;
-        setError('Call ended by the other user.');
-        cleanUpCall(true, false);
-      });
-
-      socket.current.on('user_left', (id) => {
-        if (!mounted.current) return;
-        const peerObj = peersRef.current.find((p) => p.peerId === id);
-        if (peerObj) {
-          try { peerObj.peer.destroy(); } catch (e) { console.error('Peer destroy error:', e); }
-        }
-        peersRef.current = peersRef.current.filter((p) => p.peerId !== id);
-        setPeers((prev) => prev.filter((p) => p.peerId !== id));
-        if (peersRef.current.length === 0) {
-          setError('Other user left the call.');
-          cleanUpCall(true, false);
-        }
-      });
-    }
-
-    const handleBeforeUnload = () => {
-      cleanUpCall(false, false);
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      mounted.current = false;
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      cleanUpCall(false, false);
-      if (socket.current) {
-        socket.current.off('connect');
-        socket.current.off('connect_error');
-        socket.current.off('reconnect_attempt');
-        socket.current.off('reconnect_failed');
-        socket.current.off('incoming_video_call');
-        socket.current.off('video_call_accepted');
-        socket.current.off('video_call_rejected');
-        socket.current.off('video_call_canceled');
-        socket.current.off('all_users');
-        socket.current.off('user_joined');
-        socket.current.off('receiving_returned_signal');
-        socket.current.off('call_ended');
-        socket.current.off('user_left');
-        try { socket.current.disconnect(); } catch (e) { /* ignore */ }
-        socket.current = null;
-      }
-    };
-  }, [cleanUpCall, startCallTimer]);
-
-  useEffect(() => {
-    if (type === 'initiate' && !isCalling && !inCall) {
-      startVideoCall();
-    } else if (type === 'accept' && !inCall && !incomingCall) {
-      setIncomingCall({ callerId: recipientId, callerSocketId: callerSocketIdParam, roomId: roomIdParam });
-      acceptVideoCall();
-    }
-  }, [type, isCalling, inCall, incomingCall, roomIdParam, callerSocketIdParam, recipientId]);
-
-  useEffect(() => {
-    if (localStream && localVideoRef.current) {
-      try {
-        localVideoRef.current.srcObject = localStream;
-        localStreamRef.current = localStream;
-      } catch (e) {
-        console.error('Error attaching local stream to video element:', e);
-      }
-    }
-  }, [localStream]);
 
   const createPeer = (userToSignalSocketId, callerSocketId, stream) => {
     if (!stream) {
@@ -482,38 +296,35 @@ const VideoCall = () => {
   };
 
   const acceptVideoCall = async () => {
-  if (inCall || !incomingCall) {
-    console.warn('Already in call or no incoming call');
-    return;
-  }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    setLocalStream(stream);
-    localStreamRef.current = stream;
-    setInCall(true);
-    inCallRef.current = true;
-    setCallRoomId(incomingCall.roomId);
-    callRoomIdRef.current = incomingCall.roomId;
-    setRinging(false);
-    setIncomingCall(null);
-    clearTimeout(incomingTimeoutRef.current);
-
-    if (socket.current) {
-      socket.current.emit('video_call_accept', {
-        callerSocketId: incomingCall.callerSocketId,
-        roomId: incomingCall.roomId,
-      });
-      // **THIS LINE IS CRITICAL**
-      socket.current.emit('join_video_room', incomingCall.roomId);
+    if (inCall || !incomingCall) {
+      console.warn('Already in call or no incoming call');
+      return;
     }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+      setInCall(true);
+      inCallRef.current = true;
+      setCallRoomId(incomingCall.roomId);
+      callRoomIdRef.current = incomingCall.roomId;
+      setRinging(false);
+      setIncomingCall(null);
+      clearTimeout(incomingTimeoutRef.current);
 
-    startCallTimer();
-  } catch (err) {
-    console.error('Media device error:', err);
-    setError('Failed to access camera/microphone. Check permissions.');
-    cleanUpCall(true, true);
-  }
-};
+      if (socket.current) {
+        socket.current.emit('video_call_accept', {
+          callerSocketId: incomingCall.callerSocketId,
+          roomId: incomingCall.roomId,
+        });
+      }
+      startCallTimer();
+    } catch (err) {
+      console.error('Media device error:', err);
+      setError('Failed to access camera/microphone. Check permissions.');
+      cleanUpCall(true, true);
+    }
+  };
 
   const rejectVideoCall = () => {
     if (socket.current && incomingCall) {
@@ -521,12 +332,6 @@ const VideoCall = () => {
       setIncomingCall(null);
       setRinging(false);
       clearTimeout(incomingTimeoutRef.current);
-    }
-  };
-
-  const joinVideoRoom = (roomId) => {
-    if (socket.current && mounted.current) {
-      socket.current.emit('join_video_room', roomId);
     }
   };
 
@@ -555,6 +360,184 @@ const VideoCall = () => {
   const endCall = () => {
     cleanUpCall(true, true);
   };
+
+  useEffect(() => {
+    mounted.current = true;
+
+    if (!socket.current) {
+      socket.current = io(apiUrl, {
+        query: { userId: currentUserId, recipientId },
+        transports: ['websocket'],
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+      });
+
+      socket.current.on('connect', () => {
+        console.log('Socket connected:', socket.current.id);
+        setError(null);
+      });
+
+      socket.current.on('connect_error', (err) => {
+        console.error('Socket connect error:', err);
+        setError('Failed to connect to server. Retrying...');
+      });
+
+      socket.current.on('reconnect_attempt', (n) => {
+        console.log('Reconnect attempt', n);
+        setError('Reconnecting to server...');
+      });
+
+      socket.current.on('reconnect_failed', () => {
+        console.error('Reconnect failed');
+        setError('Unable to reconnect to server.');
+      });
+
+      socket.current.on('incoming_video_call', ({ callerId, callerSocketId, roomId }) => {
+        if (!mounted.current) return;
+        setIncomingCall({ callerId, callerSocketId, roomId });
+        setRinging(true);
+        clearTimeout(incomingTimeoutRef.current);
+        incomingTimeoutRef.current = setTimeout(() => {
+          if (ringing && socket.current) {
+            socket.current.emit('video_call_reject', { callerSocketId });
+          }
+          setIncomingCall(null);
+          setRinging(false);
+        }, 60000);
+      });
+
+      socket.current.on('video_call_accepted', ({ roomId, recipientSocketId }) => {
+        if (!mounted.current) return;
+        clearTimeout(callTimeoutRef.current);
+        setIsCalling(false);
+        isCallingRef.current = false;
+        setInCall(true);
+        inCallRef.current = true;
+        setCallRoomId(roomId);
+        callRoomIdRef.current = roomId;
+        // Corrected: Initiator creates the peer and sends the initial signal
+        if (localStreamRef.current) {
+          const peer = createPeer(recipientSocketId, socket.current.id, localStreamRef.current);
+          if (peer) {
+            peersRef.current.push({ peerId: recipientSocketId, peer });
+            setPeers([peer]);
+          }
+        }
+        startCallTimer();
+      });
+
+      socket.current.on('video_call_rejected', () => {
+        if (!mounted.current) return;
+        clearTimeout(callTimeoutRef.current);
+        setError('Call rejected by the other user.');
+        cleanUpCall(true, false);
+      });
+
+      socket.current.on('video_call_canceled', () => {
+        if (!mounted.current) return;
+        setError('Call canceled by the caller.');
+        cleanUpCall(true, false);
+      });
+      
+      // Corrected: This event now handles the incoming signal from the initiator
+      // This listener is now for the recipient only.
+      socket.current.on('user_joined', ({ signal, callerId }) => {
+        if (!mounted.current || !localStreamRef.current) return;
+        const exists = peersRef.current.find((p) => p.peerId === callerId);
+        if (!exists) {
+          const peer = addPeer(signal, callerId, localStreamRef.current);
+          if (peer) {
+            peersRef.current.push({ peerId: callerId, peer });
+            setPeers((prev) => [...prev, peer]);
+          }
+        }
+      });
+      
+      // The `all_users` event is no longer necessary with the new signaling flow.
+      // It's a relic of an old logic that was causing problems.
+      socket.current.on('receiving_returned_signal', ({ signal, id }) => {
+        if (!mounted.current) return;
+        const item = peersRef.current.find((p) => p.peerId === id);
+        if (item) {
+          try {
+            item.peer.signal(signal);
+          } catch (e) {
+            console.error('Signal error:', e);
+            setError('Failed to establish connection.');
+          }
+        }
+      });
+
+      socket.current.on('call_ended', () => {
+        if (!mounted.current) return;
+        setError('Call ended by the other user.');
+        cleanUpCall(true, false);
+      });
+
+      socket.current.on('user_left', (id) => {
+        if (!mounted.current) return;
+        const peerObj = peersRef.current.find((p) => p.peerId === id);
+        if (peerObj) {
+          try { peerObj.peer.destroy(); } catch (e) { console.error('Peer destroy error:', e); }
+        }
+        peersRef.current = peersRef.current.filter((p) => p.peerId !== id);
+        setPeers((prev) => prev.filter((p) => p.peerId !== id));
+        if (peersRef.current.length === 0) {
+          setError('Other user left the call.');
+          cleanUpCall(true, false);
+        }
+      });
+    }
+
+    const handleBeforeUnload = () => {
+      cleanUpCall(false, false);
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      mounted.current = false;
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      cleanUpCall(false, false);
+      if (socket.current) {
+        socket.current.off('connect');
+        socket.current.off('connect_error');
+        socket.current.off('reconnect_attempt');
+        socket.current.off('reconnect_failed');
+        socket.current.off('incoming_video_call');
+        socket.current.off('video_call_accepted');
+        socket.current.off('video_call_rejected');
+        socket.current.off('video_call_canceled');
+        socket.current.off('user_joined');
+        socket.current.off('receiving_returned_signal');
+        socket.current.off('call_ended');
+        socket.current.off('user_left');
+        try { socket.current.disconnect(); } catch (e) { /* ignore */ }
+        socket.current = null;
+      }
+    };
+  }, [cleanUpCall, startCallTimer]);
+
+  useEffect(() => {
+    if (type === 'initiate' && !isCalling && !inCall) {
+      startVideoCall();
+    } else if (type === 'accept' && !inCall && !incomingCall) {
+      setIncomingCall({ callerId: recipientId, callerSocketId: callerSocketIdParam, roomId: roomIdParam });
+      // The accept logic now happens within the component state and handlers
+      // No direct call to acceptVideoCall here
+    }
+  }, [type, isCalling, inCall, incomingCall, roomIdParam, callerSocketIdParam, recipientId]);
+
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      try {
+        localVideoRef.current.srcObject = localStream;
+        localStreamRef.current = localStream;
+      } catch (e) {
+        console.error('Error attaching local stream to video element:', e);
+      }
+    }
+  }, [localStream]);
 
   return (
     <div className="video-call-window">
