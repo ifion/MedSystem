@@ -43,28 +43,22 @@ const VideoCall = () => {
   const callRoomIdRef = useRef(null);
 
   const configuration = {
-    iceServers: [
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      { urls: 'stun:openrelay.metered.ca:80' },
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayprojectsecret',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayprojectsecret',
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayprojectsecret',
-      },
-    ],
-    iceCandidatePoolSize: 10,
-  };
+  iceServers: [],  // Populated dynamically below
+  iceCandidatePoolSize: 10,
+};
+
+// Fetch and populate
+(async () => {
+  const response = await fetch("https://medsystem.metered.live/api/v1/turn/credentials?apiKey=069743aabe03a1b03ffa7b7bd30224c9d141");
+  const iceServers = await response.json();
+  configuration.iceServers = [
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    ...iceServers,
+  ];
+})();
+
+// Example usage: new RTCPeerConnection(configuration);
 
   const formatDuration = (seconds) => {
     const m = Math.floor(seconds / 60);
