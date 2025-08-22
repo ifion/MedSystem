@@ -475,37 +475,38 @@ const VideoCall = () => {
   };
 
   const acceptVideoCall = async () => {
-    if (inCall || !incomingCall) {
-      console.warn('Already in call or no incoming call');
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setLocalStream(stream);
-      localStreamRef.current = stream;
-      setInCall(true);
-      inCallRef.current = true;
-      setCallRoomId(incomingCall.roomId);
-      callRoomIdRef.current = incomingCall.roomId;
-      setRinging(false);
-      setIncomingCall(null);
-      clearTimeout(incomingTimeoutRef.current);
+  if (inCall || !incomingCall) {
+    console.warn('Already in call or no incoming call');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    setLocalStream(stream);
+    localStreamRef.current = stream;
+    setInCall(true);
+    inCallRef.current = true;
+    setCallRoomId(incomingCall.roomId);
+    callRoomIdRef.current = incomingCall.roomId;
+    setRinging(false);
+    setIncomingCall(null);
+    clearTimeout(incomingTimeoutRef.current);
 
-      if (socket.current) {
-        socket.current.emit('video_call_accept', {
-          callerSocketId: incomingCall.callerSocketId,
-          roomId: incomingCall.roomId,
-        });
-      }
-
-      // For callee, do not join_video_room here; wait for user_joined (offer) from caller
-      startCallTimer();
-    } catch (err) {
-      console.error('Media device error:', err);
-      setError('Failed to access camera/microphone. Check permissions.');
-      cleanUpCall(true, true);
+    if (socket.current) {
+      socket.current.emit('video_call_accept', {
+        callerSocketId: incomingCall.callerSocketId,
+        roomId: incomingCall.roomId,
+      });
+      // **THIS LINE IS CRITICAL**
+      socket.current.emit('join_video_room', incomingCall.roomId);
     }
-  };
+
+    startCallTimer();
+  } catch (err) {
+    console.error('Media device error:', err);
+    setError('Failed to access camera/microphone. Check permissions.');
+    cleanUpCall(true, true);
+  }
+};
 
   const rejectVideoCall = () => {
     if (socket.current && incomingCall) {
