@@ -1,4 +1,5 @@
 // Updated PatientDashboard.jsx
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -23,27 +24,30 @@ const PatientDashboard = () => {
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
 
+  // --- UPDATED: Extracted data fetching logic into its own function ---
+  const fetchData = async () => {
+    try {
+      setLoading(true); // Set loading to true when re-fetching
+      const headers = { Authorization: `Bearer ${token}` };
+      const [testResultsRes, diagnosesRes, prescriptionsRes, appointmentsRes] = await Promise.all([
+        axios.get(`${apiUrl}/test-results/my`, { headers }),
+        axios.get(`${apiUrl}/patient/diagnoses`, { headers }),
+        axios.get(`${apiUrl}/patient/prescriptions`, { headers }),
+        axios.get(`${apiUrl}/patient/appointments`, { headers }),
+      ]);
+      setTestResults(testResultsRes.data);
+      setDiagnoses(diagnosesRes.data);
+      setPrescriptions(prescriptionsRes.data);
+      setAppointments(appointmentsRes.data);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const headers = { Authorization: `Bearer ${token}` };
-        const [testResultsRes, diagnosesRes, prescriptionsRes, appointmentsRes] = await Promise.all([
-          axios.get(`${apiUrl}/test-results/my`, { headers }),
-          axios.get(`${apiUrl}/patient/diagnoses`, { headers }),
-          axios.get(`${apiUrl}/patient/prescriptions`, { headers }),
-          axios.get(`${apiUrl}/patient/appointments`, { headers }),
-        ]);
-        setTestResults(testResultsRes.data);
-        setDiagnoses(diagnosesRes.data);
-        setPrescriptions(prescriptionsRes.data);
-        setAppointments(appointmentsRes.data);
-        setLoading(false);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-        setLoading(false);
-      }
-    };
-    fetchData();
+    fetchData(); // Initial data fetch on component mount
   }, [token]);
 
   const handleRequestAppointment = async () => {
@@ -56,6 +60,8 @@ const PatientDashboard = () => {
       await axios.post(`${apiUrl}/patient/appointments/request`, { notes }, { headers });
       alert('Appointment request submitted successfully!');
       setNotes('');
+      // --- UPDATED: Re-fetch appointments to show the newly created one ---
+      fetchData();
     } catch (error) {
       console.error('Error requesting appointment:', error);
       alert('Failed to submit appointment request.');
@@ -65,8 +71,11 @@ const PatientDashboard = () => {
   const handleCompleteAppointment = async (id) => {
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      await axios.put(`${apiUrl}/patient/appointments/${id}/complete`, {}, { headers });
-      setAppointments(prev => prev.map(app => app._id === id ? { ...app, patientCompleted: true } : app));
+      // --- UPDATED: Capture the response from the server ---
+      const response = await axios.put(`${apiUrl}/patient/appointments/${id}/complete`, {}, { headers });
+      
+      // --- UPDATED: Use the response data to update the state accurately ---
+      setAppointments(prev => prev.map(app => app._id === id ? response.data : app));
     } catch (error) {
       console.error('Error completing appointment:', error);
       alert('Failed to mark appointment as completed');
@@ -126,6 +135,7 @@ const PatientDashboard = () => {
         <p>Loading...</p>
       ) : (
         <>
+        {/* The rest of your JSX remains the same */}
           <section className="appointments">
             <h2>My Appointments</h2>
             {appointments.length === 0 ? (

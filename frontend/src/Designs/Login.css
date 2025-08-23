@@ -73,15 +73,21 @@ input {
 }
 
 .toggle-password {
-  background: transparent;
+  background: none;
   border: none;
-  color: var(--primary);
-  font-weight: 600;
   cursor: pointer;
-  padding: 0 8px;
-  position: absolute;
-  right: 8px;
+  position: relative;
+  max-width: 30px;
+  top: 6px;
+  left: 10px;
+  font-size: 1.2rem; /* 👈 makes the eye icon a good size */
+  padding: 3px 5px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+
 
 /* === Buttons === */
 .btn-primary1 {

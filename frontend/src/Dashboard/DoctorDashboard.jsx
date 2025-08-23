@@ -1,7 +1,9 @@
+// src/components/DoctorDashboard.jsx
+
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import '../Designs/DoctorDashboard.css'; // Import the new CSS file
+import '../Designs/DoctorDashboard.css';
 
 const apiUrl = import.meta.env.VITE_API_URL;
 
@@ -11,26 +13,47 @@ const isToday = (date) => {
   return today.toDateString() === appointmentDate.toDateString();
 };
 
+// --- NEW: Helper function to get the greeting based on the time ---
+const getGreeting = () => {
+  const currentHour = new Date().getHours();
+  if (currentHour < 12) {
+    return 'Good Morning';
+  } else if (currentHour < 18) {
+    return 'Good Afternoon';
+  } else {
+    return 'Good Evening';
+  }
+};
+
 const DoctorDashboard = () => {
+  // --- NEW: State to store the doctor's name ---
+  const [doctorName, setDoctorName] = useState('');
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const token = localStorage.getItem('token');
   const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchAppointments = async () => {
+    const fetchData = async () => {
       try {
-        const response = await axios.get(`${apiUrl}/doctor/appointments`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        setAppointments(response.data);
+        const headers = { Authorization: `Bearer ${token}` };
+        // --- UPDATED: Fetch doctor profile and appointments at the same time ---
+        const [profileRes, appointmentsRes] = await Promise.all([
+          // NOTE: Replace '/doctor/profile' with your actual endpoint to get user details
+          axios.get(`${apiUrl}/doctor/profile`, { headers }),
+          axios.get(`${apiUrl}/doctor/appointments`, { headers }),
+        ]);
+
+        // --- NEW: Set the doctor's name from the API response ---
+        setDoctorName(profileRes.data.name || 'Doctor'); // Fallback to 'Doctor'
+        setAppointments(appointmentsRes.data);
         setLoading(false);
       } catch (error) {
-        console.error('Failed to load appointments:', error);
+        console.error('Failed to load dashboard data:', error);
         setLoading(false);
       }
     };
-    fetchAppointments();
+    fetchData();
   }, [token]);
 
   const handleUpdateAppointment = async (id, updates) => {
@@ -50,7 +73,8 @@ const DoctorDashboard = () => {
 
   return (
     <div className="doctor-dashboard">
-      <h1 className="dashboard-title">Doctor Dashboard</h1>
+      {/* --- UPDATED: Dynamic greeting header --- */}
+      <h1 className="dashboard-title">{getGreeting()}, Dr. {doctorName}</h1>
       <button onClick={goToProfile} className="btn-primary profile-btn">
         View My Profile
       </button>

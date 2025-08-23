@@ -1,6 +1,7 @@
-// src/pages/Login.jsx  (or wherever your Login component lives)
-import React, { useState, useEffect } from 'react';        // <-- added useEffect
+// src/pages/Login.jsx
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { FaEye, FaEyeSlash } from 'react-icons/fa';   // 👈 added icons
 import '../Designs/Login.css';
 
 function Login() {
@@ -11,7 +12,6 @@ function Login() {
   const navigate = useNavigate();
   const apiUrl = import.meta.env.VITE_API_URL;
 
-  /* 1️⃣  Clear any stale userId when the component mounts */
   useEffect(() => {
     localStorage.removeItem('userId');
   }, []);
@@ -28,10 +28,10 @@ function Login() {
       const data = await response.json();
 
       if (response.ok) {
-        const { token, role, userId } = data;   // userId is returned by /login
+        const { token, role, userId } = data;
         localStorage.setItem('token', token);
         localStorage.setItem('role', role);
-        localStorage.setItem('userId', userId); // 2️⃣  Store the real user id
+        localStorage.setItem('userId', userId);
 
         alert('Login successful!');
         switch (role) {
@@ -87,7 +87,7 @@ function Login() {
                 className="toggle-password"
                 onClick={() => setShowPassword(!showPassword)}
               >
-                {showPassword ? 'Hide' : 'Show'}
+                {showPassword ? <FaEyeSlash /> : <FaEye />}
               </button>
             </div>
           </div>

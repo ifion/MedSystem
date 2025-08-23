@@ -7,7 +7,7 @@
   width: 100%;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
-  padding: 0.8rem 0;
+  padding: 0.2rem 0;
   box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
   z-index: 1000;
   font-family: 'Poppins', sans-serif;
@@ -89,8 +89,8 @@
 
 .btn-signup,
 .btn-login {
-  padding: 0.6rem 1.2rem;
-  border-radius: 25px;
+  padding: 0.3rem 1.2rem;
+  border-radius: 20px;
   text-decoration: none;
   font-weight: 500;
   transition: all 0.3s ease;
@@ -199,6 +199,8 @@
 
 .btn-logout {
   color: #E74C3C !important;
+  border-radius: 20px;
+  padding: 0px;
 }
 
 /* Mobile Optimizations */

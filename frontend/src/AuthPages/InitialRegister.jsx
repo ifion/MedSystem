@@ -3,7 +3,8 @@ import { useLocation, useNavigate, Link } from 'react-router-dom';
 import axios from 'axios';
 import PhoneInput from 'react-phone-number-input';
 import { parsePhoneNumber } from 'libphonenumber-js';
-import '../Designs/InitialRegister.css'; // our vanilla CSS file
+import { FaEye, FaEyeSlash } from "react-icons/fa";   // 👈 import icons
+import '../Designs/InitialRegister.css';
 
 const apiUrl = import.meta.env.VITE_API_URL;
 
@@ -29,7 +30,6 @@ function InitialRegister() {
   const [showPasswords, setShowPasswords] = useState(false);
   const [phoneError, setPhoneError] = useState('');
 
-  // Fetch hospital list if needed
   useEffect(() => {
     if (role && role !== 'admin') {
       axios.get(`${apiUrl}/admin/hospitals`)
@@ -38,7 +38,6 @@ function InitialRegister() {
     }
   }, [role]);
 
-  // Password strength checker
   useEffect(() => {
     const { password } = formData;
     if (!password) {
@@ -49,7 +48,6 @@ function InitialRegister() {
     setPasswordStrength(strength);
   }, [formData.password]);
 
-  // Form validation including phone number
   useEffect(() => {
     const allFilled = Object.entries(formData).every(([key, val]) => {
       if (role === 'admin' && key === 'hospital') return true;
@@ -149,17 +147,22 @@ function InitialRegister() {
             />
           </div>
 
-          <div className="form-group">
-            <div className="input-group">
-              <input
-                type={showPasswords ? "text" : "password"}
-                name="password"
-                value={formData.password}
-                onChange={handleChange}
-                placeholder="Password"
-                required
-              />
-            </div>
+          <div className="form-group password-wrapper">
+            <input
+              type={showPasswords ? "text" : "password"}
+              name="password"
+              value={formData.password}
+              onChange={handleChange}
+              placeholder="Password"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPasswords(!showPasswords)}
+              className="toggle-password"
+            >
+              {showPasswords ? <FaEyeSlash /> : <FaEye />}
+            </button>
             {passwordStrength && (
               <div className={`password-strength ${passwordStrength.toLowerCase()}`}>
                 Strength: {passwordStrength}
@@ -167,24 +170,22 @@ function InitialRegister() {
             )}
           </div>
 
-          <div className="form-group">
-            <div className="input-group">
-              <input
-                type={showPasswords ? "text" : "password"}
-                name="confirmPassword"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                placeholder="Confirm Password"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPasswords(!showPasswords)}
-                className="btn-outline"
-              >
-                {showPasswords ? "Hide" : "Show"}
-              </button>
-            </div>
+          <div className="form-group password-wrapper">
+            <input
+              type={showPasswords ? "text" : "password"}
+              name="confirmPassword"
+              value={formData.confirmPassword}
+              onChange={handleChange}
+              placeholder="Confirm Password"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPasswords(!showPasswords)}
+              className="toggle-password"
+            >
+              {showPasswords ? <FaEyeSlash /> : <FaEye />}
+            </button>
             {formData.confirmPassword && formData.password !== formData.confirmPassword && (
               <div className="error-text">Passwords do not match</div>
             )}
@@ -224,10 +225,6 @@ function InitialRegister() {
               countryCallingCodeEditable={false}
               className="phone-input"
               required
-              // Note: If you see an "Invalid hook call" error, it’s likely due to multiple React instances.
-              // Fix by ensuring 'react' and 'react-dom' versions match and your bundler deduplicates React.
-              // Temporary workaround: Uncomment below to disable country select (loses country code feature).
-              // withCountrySelect={false}
             />
             {phoneError && <div className="error-text">{phoneError}</div>}
           </div>
