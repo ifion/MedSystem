@@ -164,6 +164,24 @@ router.get('/diagnoses', authenticate, authorize(['admin']), async (req, res) =>
   }
 });
 
+router.delete('/diagnoses/:id', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const diagnosis = await Diagnosis.findById(req.params.id);
+    if (!diagnosis) {
+      return res.status(404).json({ message: 'Diagnosis not found' });
+    }
+    const doctor = await User.findOne({ _id: diagnosis.doctorId, hospital: req.user.id });
+    if (!doctor) {
+      return res.status(403).json({ message: 'Not authorized to delete this diagnosis' });
+    }
+    await diagnosis.deleteOne();
+    res.json({ message: 'Diagnosis deleted' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error deleting diagnosis' });
+  }
+});
+
 router.get('/prescriptions', authenticate, authorize(['admin']), async (req, res) => {
   try {
     const doctorIds = (await User.find({ role: 'doctor', hospital: req.user.id })).map(d => d._id);
@@ -181,6 +199,24 @@ router.get('/prescriptions', authenticate, authorize(['admin']), async (req, res
   }
 });
 
+router.delete('/prescriptions/:id', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const prescription = await Prescription.findById(req.params.id);
+    if (!prescription) {
+      return res.status(404).json({ message: 'Prescription not found' });
+    }
+    const doctor = await User.findOne({ _id: prescription.doctorId, hospital: req.user.id });
+    if (!doctor) {
+      return res.status(403).json({ message: 'Not authorized to delete this prescription' });
+    }
+    await prescription.deleteOne();
+    res.json({ message: 'Prescription deleted' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error deleting prescription' });
+  }
+});
+
 router.get('/test-results', authenticate, authorize(['admin']), async (req, res) => {
   try {
     const doctorIds = (await User.find({ role: 'doctor', hospital: req.user.id })).map(d => d._id);
@@ -195,6 +231,60 @@ router.get('/test-results', authenticate, authorize(['admin']), async (req, res)
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error fetching test results' });
+  }
+});
+
+router.delete('/test-results/:id', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const testResult = await TestResult.findById(req.params.id);
+    if (!testResult) {
+      return res.status(404).json({ message: 'Test result not found' });
+    }
+    const doctor = await User.findOne({ _id: testResult.doctorId, hospital: req.user.id });
+    if (!doctor) {
+      return res.status(403).json({ message: 'Not authorized to delete this test result' });
+    }
+    await testResult.deleteOne();
+    res.json({ message: 'Test result deleted' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error deleting test result' });
+  }
+});
+
+router.put('/users/:id/suspend', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const user = await User.findOne({ _id: req.params.id, hospital: req.user.id });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found in your hospital' });
+    }
+    user.status = 'pending';
+    await user.save();
+    res.json({ message: 'User suspended successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error during suspension' });
+  }
+});
+
+router.delete('/users/:id', authenticate, authorize(['admin']), async (req, res) => {
+  try {
+    const user = await User.findOne({ _id: req.params.id, hospital: req.user.id });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found in your hospital' });
+    }
+    // Delete related profile
+    if (user.role === 'doctor') {
+      await DoctorProfile.deleteOne({ doctorId: user._id });
+    } else if (user.role === 'patient') {
+      await PatientProfile.deleteOne({ patientId: user._id });
+    }
+    // Note: In production, cascade delete appointments, diagnoses, etc.
+    await user.deleteOne();
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error deleting user' });
   }
 });
 

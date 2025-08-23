@@ -39,16 +39,18 @@
   font-weight: 500;
   color: #2D3436;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, transform 0.1s ease;
 }
 
 .section-button:hover {
   background-color: #EAF3FF;
+  transform: translateY(-1px);
 }
 
 .section-button.active {
   background-color: #2A8BF2;
   color: white;
+  box-shadow: 0 2px 4px rgba(42, 139, 242, 0.3);
 }
 
 .dashboard-content {
@@ -67,9 +69,14 @@
   width: 100%;
   border-collapse: collapse;
   background-color: #FFFFFF;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
   border-radius: 10px;
   overflow: hidden;
+  transition: box-shadow 0.2s ease;
+}
+
+.dashboard-table:hover {
+  box-shadow: 0 6px 10px rgba(0, 0, 0, 0.1);
 }
 
 .dashboard-table th,
@@ -89,35 +96,89 @@
   color: #636E72;
 }
 
+.dashboard-table tr:hover {
+  background-color: #F8FAFB;
+}
+
 .approve-button {
-  background: #2A8BF2;
+  background: linear-gradient(135deg, #2A8BF2, #1f6dc0);
   color: white;
   padding: 0.6rem 1.2rem;
   border-radius: 8px;
   border: none;
   cursor: pointer;
   font-weight: 600;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
   margin-right: 8px;
 }
 
 .approve-button:hover {
-  background: #1f6dc0;
+  box-shadow: 0 2px 4px rgba(42, 139, 242, 0.4);
 }
 
 .reject-button {
-  background: #E74C3C;
+  background: linear-gradient(135deg, #E74C3C, #c0392b);
   color: white;
   padding: 0.6rem 1.2rem;
   border-radius: 8px;
   border: none;
   cursor: pointer;
   font-weight: 600;
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .reject-button:hover {
-  background: #c0392b;
+  box-shadow: 0 2px 4px rgba(231, 76, 60, 0.4);
+}
+
+.action-menu {
+  display: flex;
+  gap: 8px;
+}
+
+.action-button {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: transform 0.1s ease, box-shadow 0.2s ease;
+}
+
+.action-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.action-button.view {
+  background: #3498DB;
+  color: white;
+}
+
+.action-button.suspend {
+  background: #F39C12;
+  color: white;
+}
+
+.action-button.delete {
+  background: #E74C3C;
+  color: white;
+}
+
+.action-button.approve {
+  background: #2A8BF2;
+  color: white;
+}
+
+.clickable-name {
+  cursor: pointer;
+  text-decoration: none;
+  color: #2A8BF2;
+  transition: color 0.2s ease;
+}
+
+.clickable-name:hover {
+  color: #1f6dc0;
 }
 
 .modal {
@@ -126,10 +187,10 @@
   left: 30%;
   background: #FFFFFF;
   padding: 20px;
-  border: 1px solid #ccc;
   border-radius: 10px;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
   z-index: 1000;
+  transition: opacity 0.2s ease;
 }
 
 .modal h3 {
@@ -153,6 +214,12 @@
   margin-bottom: 16px;
   border: 1px solid #ccc;
   border-radius: 8px;
+  transition: border 0.2s ease;
+}
+
+.modal select:focus,
+.modal input:focus {
+  border-color: #2A8BF2;
 }
 
 .modal button {
@@ -168,6 +235,11 @@
   padding: 8px;
   border: 1px solid #ccc;
   border-radius: 8px;
+  transition: border 0.2s ease;
+}
+
+.react-datepicker__input-container input:focus {
+  border-color: #2A8BF2;
 }
 
 .loading {
@@ -180,6 +252,52 @@
 button {
   min-width: 100px;
   min-height: 40px;
+}
+
+.close-button {
+  background: #95A5A6;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s ease;
+  margin-top: 10px;
+}
+
+.close-button:hover {
+  background: #7F8C8D;
+}
+
+.profile-view img {
+  max-width: 150px;
+  border-radius: 50%;
+  margin-bottom: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  padding: 20px;
+  width: 500px;
+  max-height: 80vh;
+  overflow: auto;
+  border-radius: 12px;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
 }
 
 /* Responsive Styles */
@@ -212,6 +330,11 @@ button {
   .modal {
     left: 10%;
     width: 80%;
+  }
+
+  .action-menu {
+    flex-direction: column;
+    gap: 4px;
   }
 }
 
